@@ -1,135 +1,215 @@
 ---
 name: transparent-gif-to-video
-description: 将带透明通道的 GIF、PNG、APNG 或图片帧序列转换为保留 alpha 的视频，或合成指定实色背景的不透明视频；支持逐帧时长精确保留、透明边缘单色检测（含可疑结果拦截）、VP9 lossless 和解码级输出校验。触发词：透明 GIF 转视频、保留透明通道、alpha 视频、GIF 转 WebM 透明、透明动图转 MP4。
+description: 使用系统 ffmpeg 将单个带透明通道的 GIF 转换为保留 alpha 的 VP9/VP8 WebM、ProRes 4444、PNG-in-MOV、qtrle 或 FFV1 视频。转换前必须先确认格式、质量、输出路径和覆盖行为。触发词：透明 GIF 转视频、保留透明通道、alpha 视频、GIF 转透明 WebM、GIF 转 ProRes 4444。
 agent_created: true
 ---
 
-# 透明素材 → 视频
+# 单个透明 GIF → Alpha 视频
 
-## 执行入口
+## 目标与边界
 
-所有操作统一使用同一个脚本，文档不维护第二套 ffmpeg 命令：
+本 skill 每次只处理一个 GIF 文件，并只生成保留 alpha 的视频。
 
-```text
-scripts/transparent_gif_to_video.py
-```
+- 输入：一个带透明通道的 `.gif`。
+- 默认推荐：有损 VP9 WebM，`CRF 30`。
+- 其他输出：VP9 lossless、VP8 WebM、ProRes 4444、PNG-in-MOV、qtrle、FFV1。
+- 运行时唯一媒体依赖：系统 `ffmpeg`。
+- 不支持：不透明 MP4/H.264、背景合成、PNG/APNG、图片序列、批量转换、缩放或裁切。
+- 视频只保存 GIF 的一个动画周期；循环播放由播放器或网页控制。
 
-默认运行目录为 skill 根目录；从别处运行时使用绝对路径。
+## 硬规则：确认后才能转换
 
-## 依赖
+能力检查和读取媒体信息属于只读操作，可以在确认前执行。任何会创建、覆盖或删除文件的命令，都必须等用户明确确认。
 
-实现位于 `scripts/tgv/` 包，入口脚本是薄壳；依赖 Pillow ≥ 9.2。
+转换前必须向用户给出一份简短计划，至少包括：
 
-| 子命令 | Pillow | ffmpeg | ffprobe |
-|---|---|---|---|
-| `inspect` / `suggest-background` | 必需 | — | — |
-| `convert` | 必需 | 必需（建议 6.0+，需要 `-enc_time_base`） | — |
-| `verify` | 必需 | 必需 | 必需 |
+1. 输入 GIF 的绝对路径；
+2. 选定格式及用途；
+3. 有损或无损；
+4. 输出绝对路径；
+5. 输出已存在时是否覆盖；
+6. 即将执行的关键 ffmpeg 参数。
 
-NumPy 为必需依赖（逐像素统计与边缘外扩）。
-
-## 执行前确认
-
-1. 输出是否保留透明。
-2. 输出用途 / 播放端。
-3. 不保留透明时的背景色 —— **未确认前不得选择黑色或任何默认色**。
-4. 是否要求无损。
-
-第 3 条有专门的流程，不要靠猜（见 §3.1）：先 `suggest-background` 分析证据，再把它给出的问题原样问用户。`--background auto-edge` 不能替代确认：它只能发现素材里存在唯一的透明边缘色，且会主动拒绝最常见的假阳性。
-
-## 1. 检查输入
+如果用户没有偏好，推荐 **VP9 WebM，有损 CRF 30**，但仍要问用户是否接受，不能直接执行。示例：
 
 ```text
-python scripts/transparent_gif_to_video.py inspect <input>
-python scripts/transparent_gif_to_video.py inspect <frames-dir> --sequence-duration-ms <ms>
+建议输出 VP9 WebM（保留透明，CRF 30，适合网页，体积通常小于无损格式）。
+输入：C:\assets\logo.gif
+输出：C:\assets\logo.webm
+输出不存在，不涉及覆盖。是否按此方案开始转换？
 ```
 
-图片序列目录和单帧静态图片没有内置时长，必须显式给 `--sequence-duration-ms`；GIF/APNG 使用自身逐帧 duration，不受该参数影响。大素材可加 `--no-edge-scan` 跳过边缘扫描。
+只有用户明确回复“确认”“开始”“按这个方案执行”等同意语句后，才能执行转换。若确认后参数发生变化，必须重新确认变化后的计划。
 
-重点字段：
+## 1. 只读预检
 
-- `width` / `height` / `frames` / `duration_seconds`
-- `frame_duration_seconds.variable`、`timing.source_mode`
-- `timing.plan`：脚本将如何铺设时间轴（`mode`、`framerate`、`output_frames`、`duration_is_exact`）
-- `alpha.has_transparency` / `alpha.binary`
-- `transparent_edge.single_colour` / `colour` / `distinct_colours` / `suspicious_reason`
+### 1.1 检查 FFmpeg
 
-## 2. 保留 alpha
+```powershell
+ffmpeg -version
+ffmpeg -hide_banner -encoders
+```
+
+推荐 Windows 环境为 BtbN FFmpeg 9.0 GPL static release branch：
+
+```powershell
+winget install --id BtbN.FFmpeg.GPL.9.0 --exact
+```
+
+不要因为 `ffmpeg.exe` 存在就假定编码器也存在。根据目标格式确认下表中的 encoder：
+
+| 输出 | 必需 encoder |
+|---|---|
+| VP9 WebM | `libvpx-vp9` |
+| VP8 WebM | `libvpx` |
+| ProRes 4444 MOV | `prores_ks` |
+| PNG-in-MOV | `png` |
+| qtrle MOV | `qtrle` |
+| FFV1 MKV | `ffv1` |
+
+缺少目标 encoder 时停止并说明原因；不得静默改成另一种格式。
+
+### 1.2 检查输入
+
+确认路径存在、扩展名为 `.gif`，然后只读解码一次：
+
+```powershell
+ffmpeg -hide_banner -v error -ignore_loop 1 -i "C:\path\input.gif" -map 0:v:0 -f null NUL
+```
+
+失败时停止，不创建输出。`-ignore_loop 1` 明确只读取一个 GIF 动画周期，避免无限循环 GIF 导致转换不结束。
+
+如果只读信息表明输入不是 GIF、没有视频流或不能解码，直接报告，不尝试修复或转用其他输入流程。
+
+## 2. 格式选择
+
+| 选择 | 容器 | Alpha | 有损 | 典型用途 |
+|---|---|---:|---:|---|
+| VP9（默认推荐） | WebM | 是 | 是 | 网页、现代 Chromium/Firefox，体积优先 |
+| VP9 lossless | WebM | 是 | 否 | 仍需 WebM，但不希望 VP9 量化 |
+| VP8 | WebM | 是 | 是 | 旧 WebM 环境兼容 |
+| ProRes 4444 | MOV | 是 | 视觉无损 | 剪辑、合成、后期母版 |
+| PNG-in-MOV | MOV | 是 | 否 | 无损交换，体积较大 |
+| qtrle | MOV | 是 | 否 | QuickTime Animation 兼容 |
+| FFV1 | MKV | 是 | 否 | 开源无损归档 |
+
+说明：
+
+- H.264/普通 MP4 没有这里所需的 alpha 语义，不提供该选项。
+- VP9 lossless 配合 `yuva420p` 不等于原始 GIF 的 RGBA 字节逐像素完全相同；它表示 VP9 不做有损量化，但色度表示仍是 4:2:0。
+- Safari/iOS 对 WebM alpha 的支持取决于具体系统和播放端；后期工作优先考虑 ProRes 4444。
+
+## 3. 转换命令模板
+
+把 `<INPUT>` 和 `<OUTPUT>` 替换为已确认的绝对路径。Windows PowerShell/CMD 中始终用双引号包裹路径。
+
+公共参数：
 
 ```text
-python scripts/transparent_gif_to_video.py convert <input> <output> --keep-alpha --codec <codec> [--crf N] [--lossless]
+-hide_banner -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux
 ```
 
-| `--codec` | 容器 | 说明 |
-|---|---|---|
-| `vp9` | `.webm` | 网页透明默认；`--lossless` 仅此编码器可用 |
-| `vp8` | `.webm` | 旧环境兼容 |
-| `prores4444` | `.mov` | 后期母版 |
-| `png` | `.mov` | 无损交换 |
-| `qtrle` | `.mov` | QuickTime 动画 |
-| `ffv1` | `.mkv` | 开源无损归档 |
+`-fps_mode passthrough` 保留 GIF demuxer 给出的逐帧时间戳；`-enc_time_base demux` 避免编码器用默认帧率的粗时间基重新量化时间戳。不要添加 `-r`，也不要把 GIF 强制转换为 25/30/60 fps。
 
-`--codec auto`：`.mov` → ProRes 4444，`.mkv` → FFV1，其余 → VP9。像素格式与 `auto-alt-ref 0` 由脚本设置，不要手写。
+### 3.1 VP9 WebM（默认推荐）
 
-## 3. 合成不透明视频
-
-### 3.1 先分析，再确认，最后转换（不透明输出的默认流程）
-
-```text
-python scripts/transparent_gif_to_video.py suggest-background <input> [--preview options.png]
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 -row-mt 1 "<OUTPUT>.webm"
 ```
 
-输出一份提案：`evidence`（各证据及信任度）、`options`（排序后的候选：素材内证据在前，常见投放背景在后）、`question`（可直接照着问用户的话术）、`auto_edge_usable`。`--preview` 会把中间帧在各候选背景上合成为一张对比图 —— 看图比读十六进制快得多。
+### 3.2 VP9 lossless WebM
 
-拿到用户答复后再执行 `convert --background '#RRGGBB'`。
-
-`--background ask` 把这一步内联：有终端时交互式提问；**非交互环境（agent、CI）会打印同样的提案并以非零码退出，绝不自行取值**。
-
-提案还会检查 `content_bbox`：如果所有帧的可见内容并集小于画布，说明透明区只是留白，此时"裁切"往往比"填色"更正确，`question.context` 会提示这一点。
-
-
-```text
-python scripts/transparent_gif_to_video.py convert <input> <output.mp4> --background '#RRGGBB' [--codec h264] [--crf N]
-python scripts/transparent_gif_to_video.py convert <input> <output.mp4> --background auto-edge
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -lossless 1 -deadline good -cpu-used 2 -row-mt 1 "<OUTPUT>.webm"
 ```
 
-不透明模式可用 `h264`（默认）、`vp9`、`vp8`。
+### 3.3 VP8 WebM
 
-`inspect` 的 `transparent_edge.background_candidates` 会列出所有可用证据及信任度：透明像素 RGB、GIF 调色板透明索引（中）、GIF 逻辑屏幕背景索引（低）、可见主体贴边主色（仅供外扩，不可当背景）。脚本只报告证据，不替你合并证据。
-
-`auto-edge` 成功的条件：透明像素 alpha=0、与可见像素 8 邻域接触、全素材采样到的 RGB 严格相同，**且该结果不可疑**。检测到多色、无样本、或结果为 `#000000`（绝大多数编码器会把全透明像素 RGB 清零，因此它通常是解码产物而非作者意图；GIF 会再与调色板透明索引交叉验证）时命令失败。确有把握时可加 `--allow-suspicious-edge-colour`，但正确做法通常是显式 `--background '#RRGGBB'`。
-
-### 透明边缘外扩（可选）
-
-```text
-python scripts/transparent_gif_to_video.py convert <input> <output.webm> --keep-alpha --bleed-edges 2
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 "<OUTPUT>.webm"
 ```
 
-把可见颜色向透明区外扩 N 轮，只改 alpha=0 像素的 RGB，任何背景下的合成结果都不变，只减少有损编码把黑色拖过边界造成的光晕。**默认 0**：实测 1000×1000 二值 alpha 素材、VP9 crf 32，边缘带平均误差白底 0.35→0.23、黑底 0.01→0.13，体积 +2.9%。适用场景是半透明素材 + 浅色投放背景；无损或母版编码无意义。
+### 3.4 ProRes 4444 MOV
 
-## 4. 硬约束
-
-- H.264 没有 alpha 语义，必须先合成背景。
-- `--lossless` 只用于 VP9。
-- VP8/VP9/H.264 要求偶数宽高；奇数尺寸直接报错，不自动缩放或裁切。
-- `--crf` 默认按编码器取值（VP8/VP9 = 30，H.264 = 20）；对 ProRes/PNG/qtrle/FFV1 无效并会警告。
-- 帧时长来自素材本身，不假设 30 fps；单帧素材不会被猜一个时长。
-- 时间轴：统一或可对齐到合理网格的时长 → 精确 CFR（必要时按 gcd 重复帧，时间戳与总时长精确）；极端不规则 → concat/VFR 回退，此时容器无法记录最后一帧时长。编码器时基固定为 1/1000。
-- 临时帧文件在转换结束后自动清理。
-
-## 5. 校验输出
-
-```text
-python scripts/transparent_gif_to_video.py verify <input> <output> --expect alpha|opaque [--sample-frames N]
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le "<OUTPUT>.mov"
 ```
 
-校验尺寸、帧数（对照 `timing.plan.output_frames`）、时长、像素格式，以及**实际解码**的首/中/末帧 alpha；WebM 自动走 libvpx 解码路径，不以 `ffprobe pix_fmt` 单独判断 alpha。`checks.all_pass` 为 `true` 才算通过。
+### 3.5 PNG-in-MOV
+
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v png -pix_fmt rgba "<OUTPUT>.mov"
+```
+
+### 3.6 qtrle MOV
+
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v qtrle -pix_fmt argb "<OUTPUT>.mov"
+```
+
+### 3.7 FFV1 MKV
+
+```powershell
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v ffv1 -level 3 -coder 1 -context 1 -g 1 -slicecrc 1 -pix_fmt yuva444p "<OUTPUT>.mkv"
+```
+
+### 覆盖规则
+
+模板默认使用 `-n`，如果输出已存在则拒绝覆盖。只有用户明确确认覆盖该具体路径后，才把 `-n` 改为 `-y`。不得先删除旧文件来规避确认。
+
+转换失败时保留 ffmpeg 的错误信息，并明确指出输出可能不完整；不要把部分文件报告为成功。
+
+## 4. 转换后验证
+
+转换完成不等于任务完成。必须使用 ffmpeg 实际解码输出。
+
+### 4.1 完整解码
+
+```powershell
+ffmpeg -hide_banner -v error -i "<OUTPUT>" -map 0:v:0 -f null NUL
+```
+
+命令必须以 0 退出。
+
+### 4.2 检查 alpha 平面
+
+VP9：
+
+```powershell
+ffmpeg -hide_banner -v error -c:v libvpx-vp9 -i "<OUTPUT>.webm" -vf alphaextract -frames:v 1 -f null NUL
+```
+
+VP8：
+
+```powershell
+ffmpeg -hide_banner -v error -c:v libvpx -i "<OUTPUT>.webm" -vf alphaextract -frames:v 1 -f null NUL
+```
+
+其他格式：
+
+```powershell
+ffmpeg -hide_banner -v error -i "<OUTPUT>" -vf alphaextract -frames:v 1 -f null NUL
+```
+
+WebM 必须显式使用 libvpx 解码器；原生路径可能忽略 WebM BlockAdditional 中的 alpha。`alphaextract` 成功证明输出可解码出 alpha 平面，但不是逐像素无损证明。
+
+只有完整解码和 alpha 检查都成功，才向用户报告完成。报告应包含：输出路径、格式、有损/无损选择和文件大小（可读取时）。
+
+## 5. 禁止的自动行为
+
+- 不确认就开始编码；
+- 用户未选择时静默采用默认格式；
+- 静默覆盖已有文件；
+- 发现 encoder 缺失后偷偷换 codec；
+- 添加固定 `-r` 或猜测帧率；
+- 将输出改成不透明 MP4；
+- 猜背景色、缩放、裁切或改变画布；
+- 一次处理多个 GIF。
 
 ## 6. 参考资料
 
-- `references/architecture.md`：脚本架构、时间轴设计与维护边界
-- `references/decision-guide.md`：格式选择和投放端决策
-- `references/flatten-alpha.md`：alpha 合成、背景色与 auto-edge 的可信度
-- `references/pitfalls.md`：错误与兼容性排查
-- `references/sizing.md`：体积与质量参数
-- `references/verification.md`：校验规则和限制
+- `references/architecture.md`：为何改成纯 ffmpeg 单文件流程
+- `references/decision-guide.md`：输出格式选择
+- `references/pitfalls.md`：Windows、时间戳和 alpha 排错
+- `references/sizing.md`：质量与体积
+- `references/verification.md`：只用 ffmpeg 的验证边界

@@ -1,35 +1,35 @@
-# 故障排查与常见误解
+# 故障排查
 
-## 1. 直接用脚本排查
-
-1. `inspect input.gif`：确认源确实含透明、帧数和时长正常。
-2. 运行 `convert`：观察脚本选取的背景色、编码器和 ffmpeg 错误。
-3. `verify input.gif output --expect alpha|opaque`：检查实际解码结果。
-4. 只在前三步都通过后，再讨论 CRF、播放器或投放端兼容性。
-
-## 2. 症状 → 原因 → 对策
-
-| 症状 | 原因 | 对策 |
+| 症状 | 常见原因 | 处理 |
 |---|---|---|
-| `auto-edge` 被拒绝 | 透明边缘采样到多个 RGB，或没有可用边缘 | 使用明确的 `--background '#RRGGBB'`；不要平均多色 |
-| H.264 输出仍想要透明 | H.264 本身没有 alpha 语义 | 改用 `--keep-alpha --codec vp9` 等 alpha 编码，或接受实色背景 |
-| WebM 播放黑底 | 播放器不支持 VP9 alpha，或编码链路错误 | 用 `verify`；确认投放端支持；VP8/VP9 alpha 必须有 `auto-alt-ref 0` |
-| 输出黑底/透明丢失 | 输出像素格式或编码器不支持 alpha | 不要手写命令；由脚本统一选择 `yuva420p`/编码器并 verify |
-| `verify` 报输出无 alpha | 使用了原生 VP9 解码路径或输出确实丢 alpha | 脚本会自动指定 libvpx；若仍失败，重新转换 |
-| 帧节奏变快/变慢、帧数变少 | 时间基被量化到 1/25（30ms→40ms），PTS 碰撞后重复帧被丢弃 | 由脚本统一处理：`-enc_time_base 1/1000` + gcd 网格 CFR；用 `verify` 对照 `timing.plan.output_frames` |
-| `auto-edge` 返回 `#000000` 并被拒绝 | 编码器把全透明像素 RGB 清零，采样到的黑色是解码产物 | 显式 `--background '#RRGGBB'`；确认后才用 `--allow-suspicious-edge-colour` |
-| 图片序列顺序错乱 | 文件名按字典序排（`frame_10` 在 `frame_2` 前） | 脚本按数字段自然排序；确认 `inspect` 的首帧就是你以为的那帧 |
-| 输出帧数多于源帧数 | 可变时长被展开到 gcd 网格（重复帧） | 这是预期：画面时序不变、时长更精确；`verify` 已按 plan 对照 |
-| 合成输出尺寸报错 | 编码器不接受奇数宽高，或用户未明确缩放 | 先决定缩放策略；不要静默裁切 |
-| 输出无限增长 | 旧命令用无限 color 源且没有明确帧边界 | 脚本先落地有限帧清单，再以源帧数编码 |
-| 边缘出现灰/彩色晕 | 透明区多色、有损量化把透明区 RGB 拖过边界 | 不透明路径显式合成背景；透明路径先降 CRF，浅色背景可试 `--bleed-edges 2`，再不行改 4:4:4 母版 |
-| 不知道该填什么背景色 | 素材本身没有权威答案 | 看 `inspect` 的 `background_candidates` 与信任度，结合投放端页面背景决定；不要让脚本替你合并证据 |
-| 只在 Safari/iOS 黑底 | 平台不按预期支持 WebM alpha | 更换载体，不要靠继续调 CRF 修复兼容性 |
+| 找不到 `ffmpeg` | 未安装或 PATH 尚未刷新 | 重新打开终端，运行 `where.exe ffmpeg` |
+| `Unknown encoder 'libvpx-vp9'` | FFmpeg build 不含 libvpx | 安装 BtbN GPL static release build |
+| 转换一直不结束 | GIF 循环设置被执行 | 确认输入前使用 `-ignore_loop 1` |
+| 动画变成 25fps 或节奏改变 | 时间戳被默认帧率/编码器时基量化 | 使用 `-fps_mode passthrough -enc_time_base demux`，不要添加 `-r` |
+| WebM 看起来是黑底 | 播放器不支持 WebM alpha，或编码错误 | 用 libvpx + `alphaextract` 验证；再检查目标播放器 |
+| ffmpeg 信息显示 `yuv420p` | 原生探测未展示附加 alpha | 不单凭该字段判断；显式用 libvpx 解码 |
+| `alphaextract` 失败 | 输出没有可解码 alpha，或用了错误解码器 | VP8/VP9 验证时显式指定 `-c:v libvpx*` |
+| 输出已存在而命令失败 | 模板默认 `-n` 防覆盖 | 只有用户明确确认后才改成 `-y` |
+| Safari/iOS 不透明或无法播放 | 平台/版本不支持目标 WebM alpha | 改用目标软件支持的格式，如 ProRes 4444；不是调 CRF 能解决的问题 |
+| 奇怪彩边或灰边 | 4:2:0 色度、有损量化或播放器合成 | 降低 CRF，或选 ProRes 4444/PNG/FFV1 |
 
-## 3. 重要澄清
+## Windows 路径
 
-- `yuva420p` 的 alpha 平面是全分辨率；4:2:0 降采样的是色度，不是 alpha。真正的软边更常来自缩放、低码率或源本身的半透明。
-- `ffprobe` 的原生 WebM 读取结果可能不展示 alpha；`verify` 会使用对应的 libvpx 解码器并检查实际 RGBA 首帧。
-- “透明区域边缘色”不是“画面主色”。脚本只读取透明像素自身、且只取接触可见像素的边缘；多色时拒绝猜测。
-- CFR 展开产生的重复帧不是"多出来的画面"：它们让时间戳落在统一网格上，帧间编码几乎不为此付出体积。
-- 不透明化与 alpha 保留是两条不同路径。合成后，透明区不存在供播放器解释的 alpha；不需要做颜色外扩。
+始终给输入和输出路径加双引号：
+
+```powershell
+"C:\Users\Name\My Assets\logo.gif"
+```
+
+不要把 PowerShell 的反引号换行形式直接复制到 CMD。为避免两种 shell 的差异，agent 实际执行时优先使用单行命令。
+
+## 多个 FFmpeg 安装
+
+运行：
+
+```powershell
+where.exe ffmpeg
+winget list --name FFmpeg
+```
+
+如果出现多个路径，先确认当前命中的版本。不要同时依赖 master 和 release branch 的 PATH 链接。

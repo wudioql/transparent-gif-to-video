@@ -15,6 +15,10 @@
 | HAP 编码尺寸报错 | 宽/高不满足 encoder 约束 | 在目标版本确认约束；拒绝奇数/不满足尺寸，不缩放、不裁切 |
 | MP4 有透明需求却没有 alpha | H.264/yuv420p 天生是不透明输出 | 仅用户明确选择黑底 MP4；计划告知永久丢 alpha；奇数尺寸拒绝 |
 | 黑底 MP4 报 `width/height not divisible by 2` | `yuv420p` 的 2×2 色度抽样要求偶数尺寸 | 宽高**任一**为奇数都会失败；停止并报告，不缩放/裁切/补边。改用 `yuv444p` 虽可编码，但兼容性差，不作绕过手段 |
+| 省略 `-vf` 里的 `format=yuv420p` 也能转成功 | ffmpeg 自动协商为 `yuv444p`（High 4:4:4） | 静默降级：兼容性差，且**绕过偶数尺寸校验**，奇数画布会"通过"。该 filter 不可省 |
+| HAP 报 `Video size WxH is not multiple of 4` | HAP 要求宽高各自为 4 的倍数 | 宽或高任一不满足即失败；停止并报告原始错误，不缩放/裁切 |
+| 转换卡住不结束 | 写成 `-ignore_loop 0`，GIF 循环计数生效 | 必须 `-ignore_loop 1`（demuxer 默认 true，但不得依赖默认值） |
+| 变帧时长被平均成 CFR | 漏了 `-fps_mode passthrough -enc_time_base demux` 或加了固定 `-r` | 逐帧 PTS 必须与源一致；实测 10/30/50/100/200ms 序列可完整保留 |
 | 黑底 MP4 只转了一半 | GIF loop 或时间轴参数错误 | `-ignore_loop 1 -fps_mode passthrough -enc_time_base demux`，不加 `-r` |
 | 输出覆盖旧文件 | `-n` 保护生效 | 只有用户确认具体覆盖后才用 `-y` |
 | 彩边/画质差 | 4:2:0 或有损编码 | 换 ProRes/PNG/FFV1 或用更低 CRF，需重新确认；不要通过调高 CRF 换体积 |

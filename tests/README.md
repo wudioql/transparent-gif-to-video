@@ -6,24 +6,42 @@
 
 维护环境为 Windows **BtbN FFmpeg 9.0.1 GPL static**（n9.0.1，`Lavf63.1.101`），已具备 `libvpx-vp9`、`libvpx`、`prores_ks`、`hap`、`png`、`qtrle`、`ffv1`、`libx264`。
 
+上表十项夹具需求已全部生成并回归通过（`run_matrix.py`：通过 59 / 失败 0）。此前遗留的
+"变帧时长 / 无限循环 / disposal / 奇数尺寸 / 特殊路径" 缺口已闭合。`、`libx264`。
+
 2026-10-02 在本环境完成动态回归，结果见 [`../test-reports/2026-10-02-matrix.md`](../test-reports/2026-10-02-matrix.md)。夹具：1000×1000、95 帧、30ms/帧、2.85s、二值 alpha（972,000 透明 / 28,000 不透明 / 0 半透明）、透明区隐藏 RGB 为白。
 
 已通过：VP9 CRF30 / VP9 lossless / VP8（均含黑色归一化）、ProRes 4444 `-alpha_bits 8`、HAP Alpha、PNG-in-MOV、qtrle、FFV1、黑底 H.264 MP4。**尚未覆盖**的夹具需求见下节第 4、7、8、9 项。
 
-## 夹具
+## 夹具（已可自动生成，全部覆盖）
 
-至少准备：
+夹具由 [`make_fixtures.py`](make_fixtures.py) 生成到 `fixtures/`（GIF 被 `.gitignore` 忽略，不入库），
+回归由 [`run_matrix.py`](run_matrix.py) 执行。两者都**只在开发/回归阶段使用**，运行时依赖仍只有 ffmpeg。
+开发侧依赖：Python + Pillow + NumPy。
 
-1. 5 帧透明 GIF，30ms；
-2. 三种以上不同帧时长；
-3. 局部帧和 disposal 2/3；
-4. 无限循环；
-5. 首帧不透明、后续透明；
-6. 透明主体接触边缘；
-7. 含空格、中文、括号的路径；
-8. 奇数尺寸 GIF；
-9. 不满足 HAP 尺寸约束的 GIF；
-10. alpha=0 隐藏 RGB 为白色、alpha=255 可见 RGB 已知的二值 GIF。
+```powershell
+python tests/make_fixtures.py     # 生成夹具并自检
+python tests/run_matrix.py        # 跑全部边界断言（通过 59 / 失败 0）
+```
+
+| # | 需求 | 夹具 | 覆盖结论 |
+|---|---|---|---|
+| 1 | 5 帧透明 GIF，30ms | `fx_01_small5_30ms.gif` | 5 帧 / 30ms 保留 |
+| 2 | 三种以上不同帧时长 | `fx_02_vardur.gif` | 10/30/50/100/200ms 逐帧 PTS 与源一致，总 0.39s，未被平均 |
+| 3 | 局部帧 + disposal 2/3 | `fx_05b_partial_real.gif`、`fx_05c_partial_disp{2,3}.gif` | disposal=1 累积 / 2、3 每帧仅剩局部块，转换结果与 ffmpeg 自身渲染一致 |
+| 4 | 无限循环 | `fx_03_loop_infinite.gif`（loop=0） | 只出一个周期（4 帧 / 0.4s）；`-ignore_loop 0` 会无限循环 |
+| 5 | 首帧不透明、后续透明 | `fx_06_first_opaque.gif` | 首帧 `YMIN=255`、全帧 `YMIN=0` —— "必须扫全帧"的硬证据 |
+| 6 | 透明主体接触边缘 | `fx_07_edge_touch.gif` | 贴边透明像素 98.86% 保持透明 |
+| 7 | 含空格、中文、括号、方括号的路径 | `测试目录 (带有 空格) [括号]/输入 [1].gif` | 转换、alpha、帧数全部正常 |
+| 8 | 奇数尺寸 GIF | `fx_09_odd_999x999.gif` 等 | WebM 侧 999×999 / 1000×999 / 999×1000 均正常且尺寸不变 |
+| 9 | 不满足 HAP 尺寸约束 | `fx_09_{w,h}-only_*.gif`、`fx_09_not4_*` | HAP 报 `Video size WxH is not multiple of 4.`（宽或高任一不满足） |
+| 10 | 已知隐藏 RGB 的二值 alpha GIF | `fx_08_binary_known_rgb.gif` | 透明区保持 (255,255,255)，可见区 (66,74,71) 基本保持 |
+
+**手写 GIF 编码器（`make_fixtures.py` 内的 `write_gif`）**：Pillow 与 ffmpeg 都只写全帧，
+无法产出带偏移的局部更新帧，所以局部帧/disposal 夹具由内置的最小 GIF89a 编码器生成。
+它自带 `validate_handcrafted()` 自检——因为编码器出错时会产出"能解码但全透明"的坏流，
+若不做自检，后续的逐像素比对会拿两个全透明画面对比，得到毫无意义的 0.00 差（此坑已真实踩过）。
+其 LZW 位宽必须在 `next_code == 2^code_size + 1` 时增长，写成 `2^code_size` 会产出 ffmpeg 无法正确还原的流。
 
 ## 通用断言
 

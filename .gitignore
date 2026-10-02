@@ -6,6 +6,8 @@
 *.mp4
 samples/
 out/
+fixtures/
+.tmp-matrix/
 
 # IDE 本地数据
 .workbuddy/

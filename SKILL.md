@@ -145,7 +145,11 @@ FFV1:  -c:v ffv1 -level 3 -coder 1 -context 1 -g 1 -slicecrc 1 -pix_fmt yuva444p
 
 ### 3.7 明确黑底 H.264 MP4（唯一不透明例外）
 
-只有用户明确选择“黑底 MP4”后才允许此路径。计划必须说明输出将永久失去 alpha。先检查宽高均为偶数；奇数尺寸直接拒绝。不要先转 WebM：用户最终只要黑底 MP4 时，应直接从 GIF 输出。
+只有用户明确选择“黑底 MP4”后才允许此路径。计划必须说明输出将永久失去 alpha。不要先转 WebM：用户最终只要黑底 MP4 时，应直接从 GIF 输出。
+
+**宽高必须均为偶数**，原因是 `yuv420p` 的 2×2 色度抽样，不是 x264 的任意限制：宽或高任一为奇数都会被编码器硬拒，报错原文为 `width not divisible by 2` / `height not divisible by 2`（2026-10-02 在 999×999 / 999×1000 / 1000×999 三种组合上实测确认）。奇数尺寸停止并报告，**不得自动缩放、裁切或补边**。
+
+例外仅作解释用：`yuv444p` 没有色度抽样，999×999 可以编码成功；但 High 4:4:4 profile 在多数播放器与平台上不被支持，**不得把它当作绕过尺码约束的手段**。
 
 ```powershell
 ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -vf "format=rgba,premultiply=inplace=1:planes=0x7,format=yuv420p" -fps_mode passthrough -enc_time_base demux -c:v libx264 -crf 20 -preset slow -movflags +faststart "<OUTPUT>.mp4"

@@ -55,7 +55,7 @@
 | PNG-in-MOV | rgba、逐帧无损 |
 | qtrle | argb、完整解码 |
 | FFV1 | yuva444p、同域无损比较 |
-| 黑底 MP4 | 仅明确选择；偶数尺寸；直接 GIF→libx264/yuv420p；完整解码且无 alpha |
+| 黑底 MP4 | 仅明确选择；偶数尺寸（宽或高任一为奇数应报错 `width/height not divisible by 2`）；直接 GIF→libx264/yuv420p；完整解码且无 alpha |
 
 ## 黑色归一化专项（可选路径，非默认）
 

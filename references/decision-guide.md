@@ -14,7 +14,7 @@
 | PNG-in-MOV | 无损交换 | 通常很大 |
 | qtrle | QuickTime Animation 遗留流程 | 体积较大 |
 | FFV1 | 开源无损归档 | 消费端兼容性弱 |
-| 黑底 H.264 MP4 | 明确不需要透明 | 永久失去 alpha；偶数宽高；只在用户明确选择后执行 |
+| 黑底 H.264 MP4 | 明确不需要透明 | 永久失去 alpha；偶数宽高（`yuv420p` 色度抽样要求，任一为奇数即失败）；只在用户明确选择后执行 |
 
 VP8/VP9 **默认保留源 GIF 的透明区底层 RGB**。只有用户明确要求黑底时才加 `format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight`：透明像素底层 RGB 变黑，支持 alpha 的浏览器仍透明，不支持 alpha 的播放器显示黑底。这不是“修复播放器透明兼容性”，也不改变 alpha 本身。
 

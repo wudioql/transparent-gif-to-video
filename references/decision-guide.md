@@ -16,7 +16,9 @@
 | FFV1 | 开源无损归档 | 消费端兼容性弱 |
 | 黑底 H.264 MP4 | 明确不需要透明 | 永久失去 alpha；偶数宽高；只在用户明确选择后执行 |
 
-VP8/VP9 默认做透明 RGB 黑色归一化：透明像素底层 RGB 变黑，支持 alpha 的浏览器仍应透明，不支持 alpha 的播放器显示黑底。这不是“修复播放器透明兼容性”。
+VP8/VP9 **默认保留源 GIF 的透明区底层 RGB**。只有用户明确要求黑底时才加 `format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight`：透明像素底层 RGB 变黑，支持 alpha 的浏览器仍透明，不支持 alpha 的播放器显示黑底。这不是“修复播放器透明兼容性”，也不改变 alpha 本身。
+
+注意该 filter 目前仅在 VP8/VP9 链路验证过；ProRes 4444 / HAP Alpha 等 MOV 路径要求黑底时需另行验证。
 
 ProRes 4444 使用 `-alpha_bits 8 -profile:v 4444 -pix_fmt yuva444p10le`。它只降低部分 alpha 数据成本，仍定位为高码率编辑母版。
 

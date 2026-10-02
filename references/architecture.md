@@ -18,9 +18,13 @@
 - 任何会创建/覆盖文件的命令都在用户明确确认后执行，默认 `-n`。
 - 画布不缩放、不裁切；H.264 偶数尺寸和 HAP 尺寸约束不满足就停止。
 
-## VP8/VP9 黑色回退
+## VP8/VP9 黑色回退（可选，非默认）
+
+**默认路径不加该 filter**，直接沿用源 GIF 的透明区底层 RGB。只有用户明确要求「黑底」时才插入。
 
 GIF alpha 在本 skill 输入假设下是二值。`format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight` 应让 alpha=0 的 RGB 变黑，而 alpha=255 保持。它是透明 RGB 黑色归一化，不是背景猜测，也不是播放器 alpha 兼容性修复。
+
+该 filter 仅在 VP8/VP9 链路验证过。若用户对 MOV 类（ProRes 4444、HAP Alpha）也要求黑底，必须先行验证，不得直接套用。
 
 该 filter 必须在 BtbN FFmpeg 9 动态验证：alpha 掩码前后一致、透明 RGB 为黑、可见 RGB 未非预期变化、浏览器仍透明、显式 libvpx 解码得到 `yuva420p`。若 FFmpeg 后续自动 unpremultiply 或改变 alpha，必须换成经验证的纯 FFmpeg filter，而不是保留未经验证的命令。
 

@@ -9,7 +9,7 @@
 - 转换前必须展示输入、格式、质量、输出、覆盖行为和关键参数，并等待明确确认。
 - 不猜背景色，不提供 auto-edge/suggest-background，不缩放、不裁切、不批量处理。
 - 保留 GIF 帧时长：使用 `-ignore_loop 1 -fps_mode passthrough -enc_time_base demux`，不加固定 `-r`。
-- VP8/VP9 默认执行**透明 RGB 黑色归一化（黑色回退）**：alpha=0 的隐藏 RGB 归零，alpha=255 保持。这只影响不支持 alpha 的播放器显示为黑色，不能修复该播放器的透明支持。
+- **默认保留源 GIF 的透明区底层 RGB**（不加任何 filter），（这是常态）；只有用户明确要求“黑底”时才执行透明 RGB 黑色归一化：alpha=0 的隐藏 RGB 归零，alpha=255 保持。两者 alpha 完全相同，只是前者在不支持 alpha 的播放器上显示为原 GIF 底色、后者显示为黑；都不能修复该播放器的透明支持。
 - Windows 目标环境为 BtbN FFmpeg 9.0 GPL static；转换前检查所选 encoder。
 
 ## 选择格式

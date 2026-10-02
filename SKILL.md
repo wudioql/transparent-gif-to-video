@@ -12,7 +12,7 @@ agent_created: true
 
 - 默认推荐 **VP9 WebM CRF 30**，保留 alpha。体积远小于无损格式，且 alpha 与 RGB 保真度明显优于 VP8（实测 PSNR 高约 7.6 dB，见 `test-reports/2026-10-02-matrix.md` §12/§13）。
 - **VP8/VP9 WebM 的 CRF 30 是唯一默认质量档位，不得主动上调。** 实测 CRF 40 会让 alpha 平面新增约 29 万个半透明像素（源为二值 alpha），且 VP8 上调至 CRF 40 仅再省 0.5% 体积。只有用户明确要求更小体积并接受画质折损时才讨论，见 `references/sizing.md`。
-- VP8/VP9 **默认做透明 RGB 黑色归一化**；**保留源 GIF 底色必须由用户显式选择**，不得作为默认值。
+- VP8/VP9 **默认保留源 GIF 的透明区底层 RGB**（不加任何 premultiply），最忠实于素材本身。**透明 RGB 黑色归一化必须经用户显式要求「黑底」才加入**，不得作为默认值。它只改变不支持 alpha 的播放端所显示的那层像素，不修复播放器兼容性。
 - 常见用途（读取逐帧内容）只需 alpha WebM 一条路径；ProRes / HAP / PNG-in-MOV / qtrle / FFV1 / 黑底 MP4 均为按需选择，不作为默认推荐。
 - GIF 原始帧时长必须保留；不得添加固定 `-r`。
 - 每次转换前必须展示计划并等待用户明确确认；能力检查和媒体读取是只读操作。
@@ -20,7 +20,7 @@ agent_created: true
 - 不猜测背景色，不静默缩放或裁切；尺寸约束不满足时停止并说明。
 - `-ignore_loop 1` 只转换一个 GIF 动画周期。
 
-计划至少列出：输入绝对路径、格式/用途、有损或无损、输出绝对路径、覆盖行为，以及关键参数。VP8/VP9 计划必须明确写出：**透明 RGB 黑色归一化（黑色回退）**；这不会修复播放器的 alpha 兼容性。
+计划至少列出：输入绝对路径、格式/用途、有损或无损、输出绝对路径、覆盖行为，以及关键参数。计划必须明确写出**底色策略**：默认「保留源 GIF 底色」；只有用户明确要求黑底时，才写「透明 RGB 黑色归一化（黑色回退）」并注明它不会修复播放器的 alpha 兼容性。
 
 ## 1. 只读预检
 
@@ -59,6 +59,8 @@ HAP 还要检查目标尺寸是否满足当前 FFmpeg HAP encoder 的约束；�
 | FFV1 MKV | 是 | 否 | 开源无损归档 |
 | **黑底 H.264 MP4** | **否** | 是 | 仅用户明确选择；永久丢失 alpha |
 
+默认输出**保留源 GIF 的透明区底层 RGB**（通常接近白），与素材一致；只有用户明确要求「黑底」时才改用 §3.0 的黑色归一化。两者 alpha 掩码与可见像素完全相同，在正确合成 alpha 的播放端视觉一致，差别仅体现在忽略 alpha 的播放端。
+
 VP8/VP9 的 alpha 位于 WebM/Matroska `BlockAdditional`。`AlphaMode=1` 只声明 alpha，不能使不支持 `BlockAdditional` 的播放器显示透明。浏览器正确和显式 libvpx 解码正确，也不代表普通桌面播放器支持。
 
 ## 3. 命令模板
@@ -71,21 +73,33 @@ VP8/VP9 的 alpha 位于 WebM/Matroska `BlockAdditional`。`AlphaMode=1` 只声�
 
 确认覆盖后才把 `-n` 改为 `-y`。
 
-以下 VP8/VP9 的 filter 是二值 GIF 专用的透明 RGB 黑色归一化：alpha=0 的 RGB 归零，alpha=255 保持；`setparams` 将元数据标为 straight。它是**默认行为与黑色回退**，不是播放器兼容性修复。
+### 3.0 底色策略（默认保留 / 可选黑底）
 
-**保留源 GIF 底色的可选变体**：只有用户明确选择「保留原 GIF 底色」时，才省略该 `-vf`，直接接公共参数。差异仅体现在忽略 alpha 的播放端（透明区显原色而非黑）；在正确合成 alpha 的播放端，两者视觉一致。是否保留底色必须写进计划并等待确认。
+**默认命令不加任何 RGB 处理 filter**——直接沿用源 GIF 的透明区底层 RGB。
+
+**可选：透明 RGB 黑色归一化（黑色回退）**。只有用户明确要求「黑底」时，才在 VP8/VP9 命令中插入：
+
+```text
+-vf "format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight"
+```
+
+对二值 alpha：alpha=0 的 RGB 归零，alpha=255 保持；`setparams` 将元数据标为 straight。alpha 掩码与可见像素不受影响。**它不是播放器兼容性修复**，只是让忽略 alpha 的播放端显示黑而非原 GIF 底色（本素材为白）。是否黑底必须写进计划并等待确认。
+
+> 注意一致性：黑色归一化目前只适用于 VP8/VP9。若用户对 MOV 类格式（ProRes 4444、HAP Alpha）也要求黑底，需另行验证 filter 在该链路的行为，不得直接套用。
 
 ### 3.1 VP9 WebM（默认）
 
 ```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -vf "format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight" -fps_mode passthrough -enc_time_base demux -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 -row-mt 1 "<OUTPUT>.webm"
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 -row-mt 1 "<OUTPUT>.webm"
 ```
+
+要求黑底时，在 `-map 0:v:0 -an` 之后插入 §3.0 的 premultiply `-vf`。
 
 **注意：CRF 是逐编码器的相对刻度，不能跨平台类比。** VP9 的 30 不等于 x264 的 30。黑底 MP4（libx264）使用 CRF 20，不要因为 WebM 默认 30 就把 MP4 也改高。同一 libvpx 家族内部也不可类比：实测 VP8 CRF 30 的 PSNR 比 VP9 CRF 30 低约 7.6 dB。
 
 ### 3.2 VP9 lossless WebM
 
-同上，编码段改为：
+同上（默认无 `-vf`；要求黑底时同样插入 §3.0 的 `-vf`），编码段改为：
 
 ```text
 -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -lossless 1 -deadline good -cpu-used 2 -row-mt 1
@@ -96,8 +110,10 @@ ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -vf "format=rg
 体积可能小于 VP9，但实测同一素材上 VP8 CRF 30 的可见区 PSNR 比 VP9 CRF 30 低约 7.6 dB，且误差随帧序累积（第 2 帧平均差 3.49 → 第 60 帧 9.63，最大差达 223）。用户明确要求 VP8 或追求极小体积时才使用。
 
 ```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -vf "format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight" -fps_mode passthrough -enc_time_base demux -c:v libvpx -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 "<OUTPUT>.webm"
+ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 "<OUTPUT>.webm"
 ```
+
+要求黑底时，在 `-map 0:v:0 -an` 之后插入 §3.0 的 premultiply `-vf`。
 
 ### 3.4 ProRes 4444 MOV
 

@@ -1,0 +1,10 @@
+# 统一换行符策略，避免 Windows/macOS/Linux 协作时的 CRLF 抖动。
+# 仓库内一律存 LF；检出时不按平台自动转换。
+* text=auto eol=lf
+
+# 回归测试用素材属于二进制，禁用换行转换与 diff
+*.gif  binary
+*.webm binary
+*.mov  binary
+*.mkv  binary
+*.mp4  binary

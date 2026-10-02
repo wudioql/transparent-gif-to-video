@@ -1,16 +1,12 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-venv/
-
-# 本 skill 的产物与素材不进仓库（见 references/architecture.md 文件边界）
+# 用户素材与生成视频不进入仓库
+*.gif
 *.webm
-*.mp4
 *.mov
 *.mkv
-*.gif
-*.apng
-!tests/**/fixtures/**
+*.mp4
 samples/
 out/
+
+# 临时文件
+*.tmp
+*.log

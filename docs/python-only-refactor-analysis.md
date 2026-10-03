@@ -79,7 +79,7 @@
 
 ## 3. 实测证据（2026-10-03，无系统 ffmpeg 环境）
 
-全部探测可由 `python docs/probes/2026-10-03-pystack-probe.py` 复现，明细见配套 `.log`。要点：
+全部探测可由 `python docs/probes/2026-10-03-pystack-probe.py` 复现，明细见 [`2026-10-03-pystack-probe.output.txt`](probes/2026-10-03-pystack-probe.output.txt)（注：产物扩展名为 `.output.txt` 而非 `.log`，因仓库 `.gitignore` 忽略 `*.log`）。要点：
 
 ### 3.1 PyAV 18.1.0（推荐栈）
 
@@ -110,6 +110,18 @@
 ```
 49 PASS / 2 FAIL（两个 FAIL 均为 hap encoder 缺失，已在 §5 定性）
 ```
+
+### 3.4 av 19.0.1 静态核验（Python ≥ 3.12 路线的预检，2026-10-03 补充）
+
+沙箱仅有 Python 3.11（av 19.0.1 为 cp312-abi3，装不上），且 GitHub release 资产下载被网络策略拦截（无法引入独立 Python 3.12，见附录 B.3）。因此改用**wheel 解剖 + 字符串标记**做静态核验，覆盖 av 19.0.1 的 Linux 与 Windows 两个 wheel：
+
+| 检查项 | 方法 | 结果 |
+|---|---|---|
+| 捆绑库 | 解包 wheel 列 `av.libs/` | 双平台均含 **libavcodec 63.1.102（FFmpeg 8.1 代系）**、libvpx 12.1.0、libx264-165、libavfilter 12.1.102 |
+| HAP encoder | 先用 av 18.1.0（运行时已确认"有 HAP 解码器、无编码器"）标定 encoder 特有字符串（`hap_alpha` / `hap_q` / `Hap QA`），再对 av 19 的 libavcodec 检查 | **三个 wheel（av18-lin / av19-lin / av19-win）中 encoder 标记均为 0**；解码器标记 `Vidvox Hap` 均在 → **av 19 同样无 HAP 编码器** |
+| §3.0 / §4.2 滤镜 | 对 av 19 的 libavfilter 检查 `alpha_mode` / `premultiply` / `inplace` / `alphaextract` / `signalstats` / `YMIN` | 双平台全部在 |
+
+结论：**av 19.0.1 与 18.1.0 的能力面一致**（唯一缺口同为 HAP encoder，编码器/滤镜集合相同）。Python ≥ 3.12 + av 19.x 路线除"运行时复测"外无已知风险；若要求零校准成本，则用 Python ≥ 3.11 + av 18.x（本文件全部结论的运行时实测基线）。
 
 ---
 
@@ -294,4 +306,52 @@ docs/probes/         # 本次分析证据（已入库）
 
 **遗留校准项（进入 Phase 1 的首个任务）**：本文全部实测基于 av 18.1.0 / Python 3.11（沙箱限制：无 3.12，GitHub release 下载被网络策略拦截，无法在沙箱装 3.12）。Phase 1 须在 Python 3.12 + av 19.0.1 上重跑 `docs/probes/2026-10-03-pystack-probe.py` 并核对：8 encoder 可用性（重点确认 hap 仍缺、其余不缺）、`setparams=alpha_mode`、尺寸约束行为。探测脚本已入库，可直接复用；如有差异，回写本文件的 §3 证据表。
 
-*本文件为分析规划产物，不引入任何运行时代码；探测脚本仅为可复现证据，不属于运行时依赖。*
+---
+
+## 附录 B：会话事件与版本出入记录（2026-10-03）
+
+1. **沙箱重置事件**：决策问答暂停期间，工作区被平台重新置备（reflog 显示 2026-10-03 07:04:51 重新 clone），此前的 commit 与 `/tmp`（含探测用 venv）被清空；`docs/` 分析产物以未跟踪文件形式完整保留（含用户补充的附录 A）。恢复后已重新提交，证据脚本与日志无缺失。
+2. **Python 下限的一处出入**：决策 UI 的选择为 **≥ 3.11**，而附录 A（用户直接写入本文件的决策记录）为 **≥ 3.12（av 19.x）**。经 §3.4 静态核验，两条版本线能力面一致（编码器/滤镜集合相同、均无 HAP encoder），**该出入不影响架构与计划内容，仅影响 pyproject 的两个数字**。定版规则：
+   - Phase 1 若能在目标机器上用 Python 3.12 + av 19.0.1 重跑探测脚本并全绿 → 按附录 A 定版 `requires-python >= 3.12`、`av >= 19, < 20`；
+   - 若要求零校准成本、直接沿用本文全部运行时实测 → 定版 `requires-python >= 3.11`、`av >= 18, < 19`。
+   - 差异本质只是"基线数字来自静态核验还是运行时实测"。
+3. **网络环境备注**：github.com 主站可达（HTTP 200），但 release 资产域名（objects.githubusercontent.com）在 SSL 层被拦截——这是 static-ffmpeg 探测失败与沙箱无法引入 Python 3.12 的共同原因，不影响 PyPI wheel 路线（§3.4 的 wheel 下载全部来自 PyPI）。
+
+---
+
+## 附录 C：实施进度
+
+| Phase | 状态 | 备注 |
+|---|---|---|
+| 0 决策固化 | ✅ 2026-10-03 | 附录 A |
+| 1 包骨架 + 能力探测 | ✅ 2026-10-03 | 验收记录见下 |
+| 2 GIF 读取层（source.py） | ⬜ | |
+| 3 编写器矩阵（writers/） | ⬜ | |
+| 4 黑底归一化（filters.py） | ⬜ | |
+| 5 验证模块（verify.py） | ⬜ | |
+| 6 回归迁移（run_matrix.py） | ⬜ | |
+| 7 质量口径校准（sizing 数字） | ⬜ | |
+| 8 文档重写（SKILL/README/references） | ⬜ | |
+
+### Phase 1 验收记录（2026-10-03）
+
+交付物：
+
+- `pyproject.toml`：hatchling 构建；包名/命令名 `tgtv`（Phase 0 未定名前的默认，改名成本为零）；`[project.scripts] tgtv = "tgtv.cli:main"`；dev extras = pytest + pillow（夹具）+ imageio-ffmpeg（Phase 6 迁移期对照工具）。
+- `src/tgtv/formats.py`：格式注册表（单一事实来源）。8 条受支持路径 + hap（已移除），`writer_options`/`muxer_options` 与旧 SKILL.md §3 命令模板逐项对应。
+- `src/tgtv/probe.py`：能力探测（只读）。用 writer 的确切配置逐条 open 验证 encoder（probe 通过 ≈ writer 可用）；验证解码器（libvpx-vp9/libvpx/gif）；尺寸约束预检（mp4 偶数、hap 4 倍数）；环境信息（av 版本、内置 FFmpeg 库、avfilter、系统 ffmpeg 仅为诊断字段）。
+- `src/tgtv/cli.py`：`tgtv probe [--json] [--require KEY...] [--size WxH]`。退出码：0 通过 / 1 预检失败 / 2 参数错误。
+- `tests/test_probe.py`：24 项验收测试。
+
+版本定版（按附录 B.2 零校准规则）：`requires-python >= 3.11`、`av >= 18,<19`、`numpy >= 1.26`。升级 av 19 前须在目标机重跑 `docs/probes/2026-10-03-pystack-probe.py`（§3.4 已静态核验能力面一致）。
+
+验收结果（无系统 ffmpeg 的 Linux 沙箱）：
+
+1. 干净 venv `pip install -e .` 成功；纯运行时安装仅引入 av + numpy（无 pillow/pytest/imageio），`tgtv probe --require vp9` 退出码 0；
+2. `tgtv probe` 报告 **8/8 受支持路径可用**（ffv1 的 level/coder/context/g/slicecrc、prores 的 profile 4444/alpha_bits 8、vp9 全套 CRF 选项均在 open 阶段验证通过）；hap 如实报「已移除：wheel 不含 hap encoder」，`--require hap` 退出码 1，不偷换格式；
+3. 尺寸约束：`--require mp4-black --size 999x999` 拒绝并输出文档化文案（宽 999 不是偶数……）；`--require vp9 --size 999x999` 通过（WebM 侧无偶数约束）；
+4. `pytest tests/test_probe.py` 24/24 通过。
+
+---
+
+*本文件为分析规划产物（Phase 1 起兼作实施进度记录）；`docs/probes/` 为可复现证据，`src/tgtv/` 为逐步落地的运行时实现。*

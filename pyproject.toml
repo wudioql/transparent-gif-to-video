@@ -1,0 +1,41 @@
+# tgtv —— 透明 GIF → 带 alpha 的视频（纯 Python 栈，无需系统 ffmpeg）
+#
+# 版本策略（docs/python-only-refactor-analysis.md 附录 B.2，零校准规则）：
+#   requires-python >= 3.11、av >= 18,< 19 是本文运行时实测的基线组合。
+#   升级到 Python 3.12 + av 19（FFmpeg 8.1）前，须在目标机器上重跑
+#   docs/probes/2026-10-03-pystack-probe.py 并全绿（§3.4 已静态核验能力面一致）。
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tgtv"
+version = "0.1.0"
+description = "透明 GIF → 带 alpha 的 VP9/VP8 WebM、ProRes 4444、PNG-in-MOV、qtrle、FFV1 或黑底 H.264；纯 Python 栈（PyAV + NumPy），不依赖系统 ffmpeg"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "av>=18,<19",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# dev：开发/回归侧。pillow 生成夹具；imageio-ffmpeg 是 Phase 6 迁移期的
+# 「旧命令等价性对照」工具（其 wheel 捆带 ffmpeg 7.0.2 二进制），非运行时依赖。
+dev = [
+    "pytest>=8",
+    "pillow>=10",
+    "imageio-ffmpeg>=0.5",
+]
+
+[project.scripts]
+tgtv = "tgtv.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tgtv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -325,7 +325,7 @@ docs/probes/         # 本次分析证据（已入库）
 |---|---|---|
 | 0 决策固化 | ✅ 2026-10-03 | 附录 A |
 | 1 包骨架 + 能力探测 | ✅ 2026-10-03 | 验收记录见下 |
-| 2 GIF 读取层（source.py） | ⬜ | |
+| 2 GIF 读取层（source.py） | ✅ 2026-10-03 | 验收记录见下 |
 | 3 编写器矩阵（writers/） | ⬜ | |
 | 4 黑底归一化（filters.py） | ⬜ | |
 | 5 验证模块（verify.py） | ⬜ | |
@@ -351,6 +351,24 @@ docs/probes/         # 本次分析证据（已入库）
 2. `tgtv probe` 报告 **8/8 受支持路径可用**（ffv1 的 level/coder/context/g/slicecrc、prores 的 profile 4444/alpha_bits 8、vp9 全套 CRF 选项均在 open 阶段验证通过）；hap 如实报「已移除：wheel 不含 hap encoder」，`--require hap` 退出码 1，不偷换格式；
 3. 尺寸约束：`--require mp4-black --size 999x999` 拒绝并输出文档化文案（宽 999 不是偶数……）；`--require vp9 --size 999x999` 通过（WebM 侧无偶数约束）；
 4. `pytest tests/test_probe.py` 24/24 通过。
+
+### Phase 2 验收记录（2026-10-03）
+
+交付物：
+
+- `src/tgtv/source.py`：`GifSource`（输入校验：按内容探测必须是 GIF）、`GifFrame`（原始 pts + 原始 VideoFrame + 懒缓存 rgba）、`GifInfo`（只读全帧扫描：尺寸/帧数/PTS 表/总时长/alpha_min）。语义映射：`ignore_loop=1` 显式传入；`iter_frames()` 每次调用独立打开输入（info 扫描与编码迭代互不干扰）；disposal/局部帧合成由 libavcodec 原生完成（与 CLI 同源）。
+- `tests/make_fixtures.py`：`validate_handcrafted()` 裁判改为「优先 tgtv 读取层、回退系统 ffmpeg」，手写 GIF 夹具在无系统 ffmpeg 环境可自检。
+- `tests/test_source.py`：16 项验收测试。
+
+验收结果（无系统 ffmpeg 沙箱，基准 = 2026-10-02 ffmpeg CLI 回归数值）：
+
+1. 变帧时长 10/30/50/100/200ms → PTS `(0, 0.01, 0.04, 0.09, 0.19)`、总时长 0.39s，**未被平均成 CFR**；
+2. 无限循环 GIF 只出一个周期（4 帧 / 0.4s）；
+3. 局部帧合成与 CLI 回归数值**逐项一致**：disposal=1 累积 `[6060, 6860, 7410]`，disposal=2/3 首帧全幅后仅剩 `[1600, 1600]`，且两组确实不同（证明 disposal 真正生效）；
+4. 首帧不透明素材：首帧 alpha_min=255（单帧会误判），`info` 全帧扫描 alpha_min=0——**首帧误判坑被结构性消灭**；
+5. 奇数尺寸 999×999 原样读取；含空格/中文/括号路径正常；透明区底层 RGB 保持源 GIF 白色（未被预乘）；
+6. 输入校验：PNG 字节冠 .gif 名被拒（按内容探测）、垃圾字节被拒、缺文件报可读错误；
+7. `pytest tests/` 40/40 通过（Phase 1 + Phase 2 合计）。
 
 ---
 

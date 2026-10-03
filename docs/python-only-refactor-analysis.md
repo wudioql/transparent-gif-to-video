@@ -4,7 +4,7 @@
 - 分支：`arena/01a1006f-transparent-gif-to-video`（基线 `73503b6`）
 - 状态：**分析与规划完成，未开始构建**（应要求先出结论，不动运行时代码）
 - 证据：[`docs/probes/2026-10-03-pystack-probe.py`](probes/2026-10-03-pystack-probe.py) +
-  [`docs/probes/2026-10-03-pystack-probe.log`](probes/2026-10-03-pystack-probe.log)
+  [`docs/probes/2026-10-03-pystack-probe.output.txt`](probes/2026-10-03-pystack-probe.output.txt)
   （在**无系统 ffmpeg** 的 Linux x86_64 / Python 3.11 沙箱实测，49 PASS / 2 FAIL，两个 FAIL 均为已定性的 HAP 缺口）
 
 ---

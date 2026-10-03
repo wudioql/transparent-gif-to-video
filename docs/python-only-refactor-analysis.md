@@ -331,7 +331,7 @@ docs/probes/         # 本次分析证据（已入库）
 | 5 验证模块（verify.py） | ✅ 2026-10-03 | 验收记录见下（顺带发现并修复末帧时长回归） |
 | 6 回归迁移（run_matrix.py） | ✅ 2026-10-03 | 验收记录见下（96 项断言全绿 + 17 组等价性对照通过） |
 | 7 质量口径校准（sizing 数字） | ✅ 2026-10-03 | 验收记录见下（双栈校准，结论全部复现） |
-| 8 文档重写（SKILL/README/references） | ⬜ | |
+| 8 文档重写（SKILL/README/references） | ✅ 2026-10-03 | 验收记录见下（§9 清单逐项过检） |
 
 ### Phase 1 验收记录（2026-10-03）
 
@@ -450,6 +450,24 @@ docs/probes/         # 本次分析证据（已入库）
 2. **VP8 CRF 已饱和**：CRF 30→40 体积 0.23→0.23 MB 一点不变（旧表亦然）。
 3. **VP8 劣于 VP9**：PSNR 落差 tgtv 6.9 dB / cli 7.5 dB（旧真实素材 7.6 dB）；**可见晕环 58,961 vs 7 px——四个数量级**，比旧表的半透明总量对比（9.2M vs 698K，幅度与素材边缘密度相关）更能说明 VP8 的致命伤在 alpha 边缘。
 4. 双栈同参等价：PSNR 差 ≤0.3 dB、体积差 ≤0.01 MB、像素计数差 ≤2%——sizing 数字对新栈成立，CLI 仅作迁移期对照。
+
+### Phase 8 验收记录（2026-10-03）
+
+按 §9 清单逐项过检：
+
+| 文件 | 动作与要点 |
+|---|---|
+| `SKILL.md` | 全量重写。前置声明反转为「运行时唯一依赖是 Python 栈（tgtv：PyAV+NumPy），不依赖系统 ffmpeg」；§1 预检 = `tgtv probe`（含 `--require/--size` 退出码语义）；§2 格式矩阵 8 路径（HAP 移除）；§3 命令模板 = agent 工作流（`--dry-run` 展示计划 → 用户确认 → `--yes` 执行 → `verify`），两段确认（`--yes` ≠ `--overwrite`）；§4 验证 = `tgtv verify` 九条规则；数字基线更新（7.6 dB → ~7 dB + 晕环四个数量级）。 |
+| `README.md` | 30 秒上手 = pip install + 三条 CLI；「运行时依赖只有系统 ffmpeg」→「只有 Python 栈（PyAV ≥18,<19 + NumPy，Python ≥3.11）」；三个验证坑改述为「结构性消失」；回归区新增三份新栈报告链接；HAP 移除说明。 |
+| `references/architecture.md` | 运行模型改为 Python 管线图（GifSource → convert → verify）+ 模块划分表；「不使用 Python/Pillow/NumPy」→「不使用系统 ffmpeg/Pillow（运行时）」；黑底 filter 段改为 `filters.premultiply_rgb` + 两处有意差异（setparams 不实现、verify --black 承载检查）。 |
+| `references/pitfalls.md` | 保留 alpha/解码器/尺寸/CRF 全部规则（表述改为新栈入口：probe/verify）；删除 CLI 特有条目（`-v error`、`format=gray`、Windows 引号、`-n/-y` 字面）；新增 PyAV 特有五条：FFmpegError 异常名、flush 包 duration=0 末帧时长坑、to_ndarray 不支持 planar yuva、GifFrame/VideoFrame API 混用、ExternalError/encoder 缺失。 |
+| `references/sizing.md` | Phase 7 已完成（新表 + 基线注解 + 历史基线保留）。 |
+| `references/verification.md` | §4.2 命令式验证改为 `tgtv verify` 规则说明；三个历史坑以「结构性消除」对照表改述（历史叙述保留）；黑色归一化专项改为 verify 断言 + 新阈值依据；开发测试段更新四个脚本入口。 |
+| `references/decision-guide.md` | （§9 未列但共享 sizing/filter 内容，一并更新）数字更新、HAP 行移除、filter 表述改 `--black`。 |
+| `tests/README.md` | 开发与运行时依赖合并叙述（同一 Python 栈；imageio-ffmpeg 仅迁移期对照）；validate_handcrafted 裁判 = tgtv 读取层（PyAV）优先；夹具表 #9 HAP 行改「已移除」；通用断言改 NumPy 口径；新增三份新栈报告状态。 |
+| `test-reports/` | 新增三份：`2026-10-03-matrix-newstack.md`（96 项矩阵）、`2026-10-03-pyav-vs-ffmpeg-cli.md`（17 组等价性）、`2026-10-03-sizing-calibration.md`（双栈校准）；旧 `2026-10-02-matrix.md` 保留为历史基线。 |
+
+最终验证：`pytest tests/` 89/89（probe 24 / source 16 / convert 30 / verify 19）；`run_matrix.py` 96 通过 / 0 失败 / 2 说明；`tgtv probe --require mp4-black --size 999x999` 退出码 1 且文案与 SKILL §1 一致；`tgtv probe` 报告 8 路径可用 + hap 如实报缺 + 系统 ffmpeg 不存在声明。
 
 ---
 

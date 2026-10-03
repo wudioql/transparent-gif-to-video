@@ -1,102 +1,78 @@
 # 开发回归测试矩阵
 
-本目录不参与 skill 运行。skill 运行时仍只依赖系统 `ffmpeg`；开发阶段可以使用额外工具解析 PTS、逐帧像素和容器结构。目标环境是 Windows BtbN FFmpeg 9.0 GPL static。
+本目录不参与 skill 分发，但**与运行时使用同一 Python 栈**：运行时依赖 `tgtv`（PyAV ≥18,<19 + NumPy），开发回归直接以 `tgtv` 为执行层，不再依赖系统 ffmpeg。迁移期对照工具 imageio-ffmpeg（dev extras）仅用于「新栈 vs ffmpeg CLI」等价性取证，不是运行时或回归的必要条件。
 
-## 状态说明
+## 状态说明（2026-10-03，Phase 1–8 完成）
 
-维护环境为 Windows **BtbN FFmpeg 9.0.1 GPL static**（n9.0.1，`Lavf63.1.101`），已具备 `libvpx-vp9`、`libvpx`、`prores_ks`、`hap`、`png`、`qtrle`、`ffv1`、`libx264`。
+- 单元/集成回归：`pytest tests/` **89/89**（probe 24 / source 16 / convert 30 / verify 19）。
+- 边界夹具矩阵：`python tests/run_matrix.py` **96 通过 / 0 失败 / 2 说明**（执行层即 tgtv；报告 [`../test-reports/2026-10-03-matrix-newstack.md`](../test-reports/2026-10-03-matrix-newstack.md)）。
+- 迁移期等价性对照：`python tests/cross_check_vs_ffmpeg.py` **17/17 组、137/137 项**（同参数下 tgtv vs ffmpeg 7.0.2 CLI 产物；报告 [`../test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md`](../test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md)）。
+- sizing 数字校准：`python tests/calibrate_sizing.py`（双栈；报告 [`../test-reports/2026-10-03-sizing-calibration.md`](../test-reports/2026-10-03-sizing-calibration.md)）。
+- 旧栈历史基线（Windows BtbN FFmpeg 9.0.1，通过 59/0）：[`../test-reports/2026-10-02-matrix.md`](../test-reports/2026-10-02-matrix.md)。
 
-上表十项夹具需求已全部生成并回归通过（`run_matrix.py`：通过 59 / 失败 0）。此前遗留的
-"变帧时长 / 无限循环 / disposal / 奇数尺寸 / 特殊路径" 缺口已闭合。`、`libx264`。
+## 夹具（自动生成，全部覆盖）
 
-2026-10-02 在本环境完成动态回归，结果见 [`../test-reports/2026-10-02-matrix.md`](../test-reports/2026-10-02-matrix.md)。夹具：1000×1000、95 帧、30ms/帧、2.85s、二值 alpha（972,000 透明 / 28,000 不透明 / 0 半透明）、透明区隐藏 RGB 为白。
+夹具由 [`make_fixtures.py`](make_fixtures.py) 按需生成（GIF 被 `.gitignore` 忽略，不入库），回归由 [`run_matrix.py`](run_matrix.py) 执行。开发依赖：`pip install -e ".[dev]"`（pytest + Pillow + imageio-ffmpeg）。
 
-已通过：VP9 CRF30 / VP9 lossless / VP8（均含黑色归一化）、ProRes 4444 `-alpha_bits 8`、HAP Alpha、PNG-in-MOV、qtrle、FFV1、黑底 H.264 MP4。**尚未覆盖**的夹具需求见下节第 4、7、8、9 项。
-
-## 夹具（已可自动生成，全部覆盖）
-
-夹具由 [`make_fixtures.py`](make_fixtures.py) 生成到 `fixtures/`（GIF 被 `.gitignore` 忽略，不入库），
-回归由 [`run_matrix.py`](run_matrix.py) 执行。两者都**只在开发/回归阶段使用**，运行时依赖仍只有 ffmpeg。
-开发侧依赖：Python + Pillow + NumPy。
-
-```powershell
-python tests/make_fixtures.py     # 生成夹具并自检
-python tests/run_matrix.py        # 跑全部边界断言（通过 59 / 失败 0）
+```bash
+pytest tests/                      # 单元/集成回归
+python tests/run_matrix.py         # 边界夹具矩阵（自建夹具）
 ```
 
 | # | 需求 | 夹具 | 覆盖结论 |
 |---|---|---|---|
 | 1 | 5 帧透明 GIF，30ms | `fx_01_small5_30ms.gif` | 5 帧 / 30ms 保留 |
-| 2 | 三种以上不同帧时长 | `fx_02_vardur.gif` | 10/30/50/100/200ms 逐帧 PTS 与源一致，总 0.39s，未被平均 |
-| 3 | 局部帧 + disposal 2/3 | `fx_05b_partial_real.gif`、`fx_05c_partial_disp{2,3}.gif` | disposal=1 累积 / 2、3 每帧仅剩局部块，转换结果与 ffmpeg 自身渲染一致 |
-| 4 | 无限循环 | `fx_03_loop_infinite.gif`（loop=0） | 只出一个周期（4 帧 / 0.4s）；`-ignore_loop 0` 会无限循环 |
-| 5 | 首帧不透明、后续透明 | `fx_06_first_opaque.gif` | 首帧 `YMIN=255`、全帧 `YMIN=0` —— "必须扫全帧"的硬证据 |
+| 2 | 三种以上不同帧时长 | `fx_02_vardur.gif` | 10/30/50/100/200ms 逐帧 PTS 与源一致，总 0.39s（含末帧时长），未被平均 |
+| 3 | 局部帧 + disposal 2/3 | `fx_05b_partial_real.gif`、`fx_05c_partial_disp{2,3}.gif` | disposal=1 累积 / 2、3 每帧仅剩局部块，与读取层自身渲染逐项一致，且确实与 disposal=1 不同 |
+| 4 | 无限循环 | `fx_03_loop_infinite.gif`（loop=0） | 只出一个周期（4 帧 / 0.4s）；危险对照 `ignore_loop=0` 以帧数上限法证无限重复 |
+| 5 | 首帧不透明、后续透明 | `fx_06_first_opaque.gif` | 首帧 alpha_min=255、全帧 alpha_min=0 ——「必须扫全帧」的硬证据 |
 | 6 | 透明主体接触边缘 | `fx_07_edge_touch.gif` | 贴边透明像素 98.86% 保持透明 |
-| 7 | 含空格、中文、括号、方括号的路径 | `测试目录 (带有 空格) [括号]/输入 [1].gif` | 转换、alpha、帧数全部正常 |
+| 7 | 含空格、中文、括号、方括号的路径 | `测试目录 (带有 空格) [括号]/输入 [1].gif` | CLI 端到端转换、alpha、帧数全部正常 |
 | 8 | 奇数尺寸 GIF | `fx_09_odd_999x999.gif` 等 | WebM 侧 999×999 / 1000×999 / 999×1000 均正常且尺寸不变 |
-| 9 | 不满足 HAP 尺寸约束 | `fx_09_{w,h}-only_*.gif`、`fx_09_not4_*` | HAP 报 `Video size WxH is not multiple of 4.`（宽或高任一不满足） |
+| 9 | 不满足 HAP 尺寸约束 | `fx_09_{w,h}-only_*.gif`、`fx_09_not4_*` | HAP 随 Phase 0 决策移除（PyAV wheel 无 hap encoder）；该组下线，尺寸约束逻辑由 mp4-black 偶数校验承载 |
 | 10 | 已知隐藏 RGB 的二值 alpha GIF | `fx_08_binary_known_rgb.gif` | 透明区保持 (255,255,255)，可见区 (66,74,71) 基本保持 |
 
-**手写 GIF 编码器（`make_fixtures.py` 内的 `write_gif`）**：Pillow 与 ffmpeg 都只写全帧，
-无法产出带偏移的局部更新帧，所以局部帧/disposal 夹具由内置的最小 GIF89a 编码器生成。
-它自带 `validate_handcrafted()` 自检——因为编码器出错时会产出"能解码但全透明"的坏流，
-若不做自检，后续的逐像素比对会拿两个全透明画面对比，得到毫无意义的 0.00 差（此坑已真实踩过）。
-其 LZW 位宽必须在 `next_code == 2^code_size + 1` 时增长，写成 `2^code_size` 会产出 ffmpeg 无法正确还原的流。
+**手写 GIF 编码器（`make_fixtures.py` 内的 `write_gif`）**：Pillow 只写全帧，无法产出带偏移的局部更新帧，所以局部帧/disposal 夹具由内置的最小 GIF89a 编码器生成。它自带 `validate_handcrafted()` 自检——裁判优先用 **tgtv 读取层**（PyAV，与运行时同解码器；未安装 tgtv 的旧环境回退系统 ffmpeg）——因为编码器出错时会产出「能解码但全透明」的坏流，若不自检，逐像素比对会拿两个全透明画面对比得到毫无意义的 0.00 差（此坑已真实踩过）。其 LZW 位宽必须在 `next_code == 2^code_size + 1` 时增长，写成 `2^code_size` 会产出无法正确还原的流。
 
-## 通用断言
+## 通用断言（NumPy 管线口径）
 
-- 编码退出码为 0；
-- `-ignore_loop 1` 对无限循环只输出一个周期；
-- 完整解码成功；
-- alphaextract 成功（alpha 输出）；
-- alphaextract + `format=gray` + signalstats 扫描全部帧，首/中/末均覆盖；
-  - 不可加 `-v error`：signalstats 输出在 info 级，加了会静默退化成零帧而断言被跳过；
-  - 不可省 `format=gray`：>8bit alpha（如 `yuva444p12le`）会让 8 位阈值误判 FAIL；
-- 至少一帧 `YMIN < 255`；
-- **有损路径**：统计半透明像素数（0 < alpha < 255），二值 GIF 源应接近 0；
-- **必须逐帧**，不得只测首帧——首帧是关键帧，污染从第 2 帧起才累积；
-- 首、中、末帧顺序正确；
-- 逐帧取样在 hash 前先断言原始输出字节数非零；
-- 30ms 未变成 40ms，变时长未被平均为 CFR；
-- `-n` 拒绝覆盖，明确确认后 `-y` 才覆盖；
-- 不存在 Python/Pillow/NumPy/图片序列运行时依赖。
+- 转换成功且帧数与源一致；完整解码零帧即异常；
+- 无限循环只输出一个周期；PTS 逐帧一致（含末帧）与总时长一致，未被平均成 CFR；
+- 全帧 alpha 扫描：至少一帧 alpha_min < 255（首帧不透明素材靠全帧扫描发现透明）；
+- 半透明区分轻重：32–223 可见晕环占比 < 0.5%，1–31 / 224–254 取整不计；
+- 底色策略：默认路径透明区 RGB 与源一致（意外预乘检测）；`--black`/mp4-black 归黑；
+- 尺寸不缩放；黑底 MP4 奇数尺寸在预检阶段拒绝且零产出；
+- 覆盖保护：输出已存在默认拒绝且原文件不动；`--overwrite` 才覆盖；输出=输入拒绝；
+- 确认闸：非交互（含管道）必须 `--yes`；`--dry-run` 零写入；
+- 无损路径按域断言：png/qtrle RGBA 域逐像素一致；ffv1 yuva444p 原生域逐像素一致。
+
+signalstats 时代的三个坑（`-v error` 清零采样、>8bit alpha 需 `format=gray`、首帧误判）在 NumPy 管线中结构性消除，见 `references/verification.md`。
 
 ## 格式矩阵
 
 | 路径 | 编码/关键验证 |
 |---|---|
-| VP9 CRF30 | `libvpx-vp9`；黑色归一化；显式 libvpx-vp9 解码得到 `yuva420p` |
-| VP9 lossless | 同上；检查 alpha 与时间戳 |
-| VP8 CRF30 | `libvpx`；不要用 VP9 decoder |
-| ProRes 4444 | `prores_ks -profile:v 4444 -alpha_bits 8 -pix_fmt yuva444p10le`；alphaextract + 目标编辑器 |
-| HAP Alpha | `hap -format hap_alpha -compressor snappy`；先检查 encoder 和尺寸，不缩放/裁切 |
-| PNG-in-MOV | rgba、逐帧无损 |
-| qtrle | argb、完整解码 |
-| FFV1 | yuva444p、同域无损比较 |
-| 黑底 MP4 | 仅明确选择；偶数尺寸（宽或高任一为奇数应报错 `width/height not divisible by 2`）；直接 GIF→libx264/yuv420p；完整解码且无 alpha |
+| vp9（默认） | `libvpx-vp9` CRF30；显式 libvpx-vp9 解码得 `yuva420p` 且全帧 alpha_min=0 |
+| vp9-lossless | 同上；`yuva420p` 表示域限制（非 RGBA 逐点保证） |
+| vp8 | `libvpx` CRF30；显式 libvpx 解码 |
+| prores4444 | `prores_ks` profile 4444 + 8-bit alpha；解码 `yuva444p12le`；建议目标编辑器实测 |
+| png-mov | rgba、RGBA 域逐像素无损 |
+| qtrle | argb、RGBA 域逐像素无损 |
+| ffv1 | yuva444p、原生域逐像素无损 |
+| mp4-black | 仅明确选择；偶数尺寸预检拒绝；GIF→libx264/yuv420p 直出；无 alpha 即正确证据 |
 
 ## 黑色归一化专项（可选路径，非默认）
 
-默认输出**不加 filter**、保留源 GIF 的透明区底层 RGB；只有用户明确要求黑底时才走本节。测试时两条路径分别执行。
+默认输出不做 RGB 处理、保留源 GIF 透明区底层 RGB；`--black`（须用户显式要求，仅 VP8/VP9）与 mp4-black 两条路径分别执行并验证：
 
-在目标 BtbN FFmpeg 9 上对转换前后的帧：
+1. 透明区 RGB：黑底路径均值 < 10；默认路径与源平均差 < 40（VP9 CRF30 固有漂移 15–18，意外预乘 ≥100）；
+2. alpha 阈值化一致 > 99%（取整不算失配）；
+3. 可见区 RGB MAD < 8（PSNR 一并报告）；
+4. 显式 libvpx-vp9 解码得到 `yuva420p`。
 
-1. 比较 alpha 掩码，必须相同；
-2. 断言 alpha=0 RGB 全为黑（黑底路径）；默认路径则断言其**保持源 GIF 的原 RGB**；
-3. 断言 alpha=255 RGB 未非预期改变；
-4. 浏览器显示仍透明；
-5. 显式 `-c:v libvpx-vp9` 解码得到 `yuva420p`。
+实现为 `filters.premultiply_rgb`（NumPy uint16 中间量），等价旧 `premultiply=inplace=1:planes=0x7`；`setparams=alpha_mode=straight` 有意不实现（Matroska `AlphaMode=1` 由复用器自动声明，差异以像素级回归覆盖）。
 
-候选 filter 为：
+## 迁移期对照脚本
 
-```text
-format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight
-```
-
-若测试发现后续自动 unpremultiply 或 alpha 改变，必须更换为已在 FFmpeg 9 验证的纯 FFmpeg filter，并更新命令与报告。
-
-## ProRes、HAP、MP4 专项
-
-- ProRes：验证 `alphaextract`，导入至少一个目标编辑器；确认 8-bit alpha 足够二值 GIF。
-- HAP：目标 BtbN/FFmpeg 9 按宽、高均为 4 的倍数检查，并用 encoder 帮助/实际编码确认；不满足时必须失败；验证 MOV 完整解码和目标 VJ/实时播放软件。
-- 黑底 MP4：奇数宽或高必须拒绝；检查 `yuv420p`、完整解码、黑色透明区；不允许把没有 alpha 平面误称为“alpha 验证”。
+- [`cross_check_vs_ffmpeg.py`](cross_check_vs_ffmpeg.py)：CLI 命令由 `formats.FORMATS` 选项逐项生成（两栈编码参数相同，唯一差异是执行引擎），17 组 × 8 维度（帧数/画布/PTS/时长/像素格式/alpha 一致/可见区与透明区同档 + 按域逐像素精确）。
+- [`calibrate_sizing.py`](calibrate_sizing.py)：CRF 关键数字双栈校准（高边缘密度合成素材；边缘密度是 VP8 alpha 损伤的驱动因素，纯几何素材落差仅 2.3 dB 不具代表性）。

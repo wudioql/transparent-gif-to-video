@@ -1,18 +1,23 @@
-"""tgtv 命令行入口（Phase 1 骨架）。
+"""tgtv 命令行入口（Phase 1–3）。
 
-当前子命令：
+子命令：
     tgtv probe [--json] [--require KEY[,KEY...]] [--size WxH]
         能力探测（只读）。--require 让退出码表达「预检是否通过」，
         供 agent 在展示转换计划前做脚本化预检（对应旧 SKILL.md §1）。
 
-后续阶段将按 docs/python-only-refactor-analysis.md §7 增补：
-    tgtv convert <input.gif> ...   （Phase 3：计划展示 → 确认 → 转换）
-    tgtv verify <output> ...       （Phase 5：全帧 alpha/时长/像素断言）
+    tgtv convert <input.gif> [-f KEY] [-o PATH] [--black] [--overwrite]
+                            [--yes] [--dry-run] [--json]
+        转换（Phase 3）。流程：只读构建计划 → 展示 → 确认闸 → 执行。
+        确认闸：交互终端提示输入 yes；非交互环境（agent）须先另行向用户
+        展示计划并获得确认，再用 --yes。--dry-run 只展示计划。
 
-不变量（落在 CLI 层，见 §6.3）：
-    - 任何会创建/覆盖文件的命令默认拒绝覆盖既有输出（旧 -n 语义），
-      仅在用户明确确认该具体路径后才允许（旧 -y 语义）；
-    - 缺 encoder / 尺寸约束不满足 → 停止并报告，不偷换格式、不缩放裁切。
+不变量（落在 CLI 层，见分析文档 §6.3）：
+    - 输出已存在时默认拒绝覆盖（旧 -n 语义），仅 --overwrite 明确确认后覆盖；
+    - 缺 encoder / 尺寸约束不满足 → 停止并报告，不偷换格式、不缩放裁切；
+    - --black（黑色归一化）仅 VP8/VP9 链路可用，且必须显式要求。
+
+后续阶段将按 docs/python-only-refactor-analysis.md §7 增补：
+    tgtv verify <output> ...       （Phase 5：全帧 alpha/时长/像素断言）
 """
 
 from __future__ import annotations
@@ -23,7 +28,9 @@ import re
 import sys
 import unicodedata
 
-from . import __version__, formats, probe
+from . import __version__, convert, formats, probe
+from .convert import ConvertError
+from .source import GifSourceError
 
 _SIZE_RE = re.compile(r"^(\d+)x(\d+)$")
 
@@ -62,6 +69,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="目标画布尺寸（如 999x999），结合 --require 做尺寸约束预检；须与 --require 同用",
     )
     p_probe.set_defaults(func=_cmd_probe)
+
+    p_conv = sub.add_parser(
+        "convert",
+        help="转换单个透明 GIF（先展示计划，确认后执行）",
+    )
+    p_conv.add_argument("input", help="输入 .gif 路径（一次一个，按内容探测必须是 GIF）")
+    p_conv.add_argument(
+        "-f", "--format", default="vp9", metavar="KEY",
+        help="输出格式（默认 vp9；可用：%(default)s 之外的见 tgtv probe）",
+    )
+    p_conv.add_argument("-o", "--output", metavar="PATH", help="输出路径（默认输入同目录换扩展名）")
+    p_conv.add_argument(
+        "--black", action="store_true",
+        help="透明 RGB 黑色归一化（仅 VP8/VP9 链路；不修复播放器 alpha 兼容性）",
+    )
+    p_conv.add_argument(
+        "--overwrite", action="store_true",
+        help="确认覆盖既有输出文件（默认拒绝覆盖，-n 语义）",
+    )
+    p_conv.add_argument(
+        "--yes", action="store_true",
+        help="跳过交互确认（计划已经向用户展示并获确认后使用）",
+    )
+    p_conv.add_argument(
+        "--dry-run", action="store_true", help="只展示计划，不执行、不写任何文件"
+    )
+    p_conv.add_argument("--json", action="store_true", help="计划与结果用 JSON 输出")
+    p_conv.set_defaults(func=_cmd_convert)
     return parser
 
 
@@ -175,13 +210,77 @@ def _evaluate_require(report: dict, keys: list[str], size: tuple[int, int] | Non
     return results
 
 
+def _cmd_convert(args: argparse.Namespace) -> int:
+    plan = convert.build_plan(
+        args.input,
+        args.output,
+        args.format,
+        black_background=args.black,
+        overwrite=args.overwrite,
+    )
+
+    if args.dry_run:
+        print(json.dumps(convert.plan_to_dict(plan), ensure_ascii=False, indent=2)
+              if args.json else convert.render_plan(plan))
+        return 0
+
+    if not args.json:
+        print(convert.render_plan(plan))
+
+    # 覆盖保护前移：输出已存在且未获 --overwrite 时，在确认闸之前就拒绝
+    # （旧 -n 语义：确认执行计划 ≠ 确认覆盖该文件，两件事分开确认）
+    if plan.output_exists and not plan.overwrite:
+        print(
+            f"输出已存在，拒绝覆盖（-n 语义）：{plan.output_path}。"
+            "确认覆盖该具体文件请使用 --overwrite。",
+            file=sys.stderr,
+        )
+        return 1
+
+    # 确认闸：--yes 之外必须交互确认；非交互环境拒绝盲执行
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(
+                "非交互环境且未提供 --yes：请先向用户展示以上计划并获得明确确认，"
+                "再以 --yes 执行。",
+                file=sys.stderr,
+            )
+            return 1
+        reply = input("\n确认执行以上计划？输入 yes 继续：")
+        if reply.strip().lower() not in ("yes", "y"):
+            print("已取消，未写任何文件。")
+            return 1
+
+    result = convert.execute(plan)
+    if args.json:
+        print(json.dumps({
+            "output": str(result.output_path),
+            "size_bytes": result.output_size_bytes,
+            "frames": result.frames_written,
+            "duration_seconds": result.source_duration_seconds,
+            "alpha_preserved": result.alpha_preserved,
+        }, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"\n完成：{result.output_path}（{result.frames_written} 帧 / "
+            f"{result.output_size_bytes / 1024:.1f} KiB / "
+            f"{'alpha 保留' if result.alpha_preserved else '无 alpha（黑底 MP4，符合预期）'}）"
+        )
+        print("提示：可用 `tgtv verify` 做转换后验证（Phase 5 提供）。")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "func", None) is None:
         parser.print_help()
         return 2
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (ConvertError, GifSourceError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -326,8 +326,8 @@ docs/probes/         # 本次分析证据（已入库）
 | 0 决策固化 | ✅ 2026-10-03 | 附录 A |
 | 1 包骨架 + 能力探测 | ✅ 2026-10-03 | 验收记录见下 |
 | 2 GIF 读取层（source.py） | ✅ 2026-10-03 | 验收记录见下 |
-| 3 编写器矩阵（writers/） | ⬜ | |
-| 4 黑底归一化（filters.py） | ⬜ | |
+| 3 编写器矩阵（writers/） | ✅ 2026-10-03 | 验收记录见下（实现简化为注册表驱动的单一通用 writer） |
+| 4 黑底归一化（filters.py） | ✅ 2026-10-03 | 验收记录见下 |
 | 5 验证模块（verify.py） | ⬜ | |
 | 6 回归迁移（run_matrix.py） | ⬜ | |
 | 7 质量口径校准（sizing 数字） | ⬜ | |
@@ -369,6 +369,25 @@ docs/probes/         # 本次分析证据（已入库）
 5. 奇数尺寸 999×999 原样读取；含空格/中文/括号路径正常；透明区底层 RGB 保持源 GIF 白色（未被预乘）；
 6. 输入校验：PNG 字节冠 .gif 名被拒（按内容探测）、垃圾字节被拒、缺文件报可读错误；
 7. `pytest tests/` 40/40 通过（Phase 1 + Phase 2 合计）。
+
+### Phase 3+4 验收记录（2026-10-03）
+
+**设计简化**：原计划的 `writers/` 八个模块收敛为 `convert.py` 一个**注册表驱动的通用 writer**——8 条路径的执行流程完全同构（add_stream → 配置 → 逐帧 reformat + pts 透传 → encode/mux → flush），差异全部落在 `formats.py` 注册表字段上；Phase 1 的 probe 用同一份配置做过 open 验证，「probe 通过 ⇒ writer 可用」不漂移。
+
+交付物：
+
+- `src/tgtv/convert.py`：`build_plan`（只读预检：格式存在/尺寸约束/黑底链路边界/encoder 可用/输出路径，全过才成计划）、`render_plan`（输入/格式/关键参数/输出/底色策略/覆盖行为）、`execute`（-n 覆盖保护、逐帧 pts 透传、帧数一致性校验、失败保留可读错误且输出视为可能不完整）。
+- `src/tgtv/filters.py`（Phase 4）：`premultiply_rgb`（uint16 中间量，a=255 逐像素精确、a=0 归零）等价旧 `premultiply=inplace=1:planes=0x7`；**有意不实现** `setparams=alpha_mode=straight`（仅帧元数据，Matroska `AlphaMode=1` 由复用器自动声明；差异以像素级回归覆盖）。黑底仅限 VP8/VP9 链路（`BLACK_ALLOWED_KEYS`），mp4-black 的「合成到黑」复用同一函数。
+- `src/tgtv/cli.py`：`tgtv convert <input> [-f KEY] [-o PATH] [--black] [--overwrite] [--yes] [--dry-run] [--json]`。**确认闸**：交互终端提示 yes；非交互（含管道）必须 `--yes`；**覆盖保护前移**：输出已存在且无 `--overwrite` 时在确认闸之前即拒绝（确认执行计划 ≠ 确认覆盖，两件事分开确认——对应旧 `-n`/`-y` 语义）。
+- `tests/test_convert.py`：28 项验收测试。
+
+验收结果（无系统 ffmpeg 沙箱，68/68 = Phase 1–4 合计）：
+
+1. **8/8 路径转换闭环**：VP9（默认）/ VP9 lossless / VP8 显式 libvpx 解码均得 `yuva420p` 且 alpha_min=0；ProRes 4444 解码 `yuva444p12le`（与旧栈一致）；PNG-in-MOV 在 RGBA 域**逐像素无损**（`np.array_equal`）；qtrle `argb`、FFV1 `yuva444p`、黑底 MP4 `yuv420p`（无 alpha，预期）全部符合。
+2. **PTS 透传**：变时长 10/30/50/100/200ms 转换后仍为 `[0, 0.01, 0.04, 0.09, 0.19]`，未被平均。
+3. **底色语义**：默认路径透明区保持源 GIF 白色（>245）；`--black` 透明区 RGB≈0、alpha 阈值化一致 >99%、可见区均差 <8；mp4-black 透明区呈现黑（<20）、可见区不劣化。
+4. **硬边界**：hap 请求报「已移除」不偷换；未知格式报错；黑底请求 prores 报「仅支持 vp9/vp9-lossless/vp8」；999×999 的 mp4-black 在**预检阶段**拒绝且零文件产出；999×999 的 vp9 正常且画布不变。
+5. **覆盖/确认不变量**：已存在输出默认拒绝且原文件未被触碰；`--overwrite` 明确确认后成功；输出=输入拒绝；`--dry-run` 零写入；非交互无 `--yes` 拒绝（含管道喂 yes）；交互 yes/no 路径正确。
 
 ---
 

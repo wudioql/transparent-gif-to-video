@@ -329,7 +329,7 @@ docs/probes/         # 本次分析证据（已入库）
 | 3 编写器矩阵（writers/） | ✅ 2026-10-03 | 验收记录见下（实现简化为注册表驱动的单一通用 writer） |
 | 4 黑底归一化（filters.py） | ✅ 2026-10-03 | 验收记录见下 |
 | 5 验证模块（verify.py） | ✅ 2026-10-03 | 验收记录见下（顺带发现并修复末帧时长回归） |
-| 6 回归迁移（run_matrix.py） | ⬜ | |
+| 6 回归迁移（run_matrix.py） | ✅ 2026-10-03 | 验收记录见下（96 项断言全绿 + 17 组等价性对照通过） |
 | 7 质量口径校准（sizing 数字） | ⬜ | |
 | 8 文档重写（SKILL/README/references） | ⬜ | |
 
@@ -419,6 +419,22 @@ docs/probes/         # 本次分析证据（已入库）
 3. **无源模式**：仅做输出自身断言（完整解码/解码器/alpha），不含比对项。
 4. **CLI**：通过 exit 0、失败 exit 1、`--json` 可解析且含 stats 全量数字。
 5. **顺带发现并修复真回归——末帧时长**：`tgtv verify` 的「总时长与源一致」发现 3×100ms 素材的 WebM 容器 Duration=0.21s（ffmpeg CLI 基准 0.30s）。根因：libvpx/x264 将帧缓冲到 flush 才吐包且包 duration=0，Matroska 的 BlockDuration/容器 Duration 只记到末帧 pts+1tick；且转换循环内拿不到包，此前对 packet 的赋值从未执行。修复：convert 按 pts 建「源帧→duration」映射，在 mux 前写回包上（帧侧同时设置 frame.duration）。修复后 WebM/MP4 容器时长与源一致（0.300s），修复前产物被 verify 精确报警（"输出 0.210s / 源 0.300s"）。回归测试 `test_last_frame_duration_preserved`（webm+mp4）钉住。
+
+### Phase 6 验收记录（2026-10-03）
+
+交付物：
+
+- `tests/run_matrix.py`（重写，执行层换新栈）：断言分组与口径沿用旧 ffmpeg CLI 版（旧版见 git 历史），执行层 = tgtv 包本身，**不再依赖系统 ffmpeg**。对照组改写为新读取层上的等价形式：默认 options 单周期对照；`ignore_loop=0` 危险对照改为帧数上限法（读到 >1 周期即证，不再依赖 8 秒超时挂起）。逐项检查直接复用 `tgtv verify` 的 Check 列表（fold_verify）。HAP 组随 Phase 0 决策下线；「MP4 省略 format=yuv420p 静默产出 yuv444p」的危险对照被预检结构性消灭（记录为 INFO）。
+- `tests/cross_check_vs_ffmpeg.py`（新增，迁移期对照）：CLI 命令由 `formats.FORMATS` 的 writer_options/muxer_options **逐项生成**——两栈编码参数相同、唯一差异是执行引擎（ffmpeg 7.0.2 CLI 管线 vs PyAV 18.1.0 管线）。17 组（small5×8 格式 + binary×{vp9, vp9 --black, mp4-black} + vardur/partial_real/first_opaque/edge/odd_999/disposal2×vp9），每组 8 个维度：帧数/画布/PTS/容器时长/解码像素格式/alpha 阈值化一致/可见区与透明区 RGB 同档；逐像素精确断言沿用 verify.py 的域规则（png/qtrle RGBA 域、ffv1 yuva444p 原生域；vp9-lossless/prores4444 因表示域限制只做同档指标——这正是域规则的体现，见 formats.py note）。
+- `test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md`：对照报告（基线 ffmpeg 7.0.2-static，imageio-ffmpeg 捆带）。
+- `src/tgtv/verify.py`：`THRESH_TRANS_KEPT_MAD` 12→40（依据见下）；stats 新增 `transparent_rgb_mean`。
+
+验收结果：
+
+1. **run_matrix 新栈版 96 通过 / 0 失败 / 2 说明**（旧 59 项断言的超集——展开 verify 逐项检查后为 96 项）。
+2. **等价性对照 17/17 组、137/137 项通过**：全部夹具 × 全部格式下，两栈产物的帧数/画布/PTS/时长/像素格式完全一致；有损路径 alpha 阈值化一致 ≥99.86%、可见区 MAD ≤0.57、透明区 MAD ≤2.74（同参数同档）；png-mov/qtrle 两产物均对源 RGBA 逐像素一致；ffv1 两产物 yuva444p 原生域逐像素一致。
+3. **阈值校准（唯一发现的口径问题，非回归）**：VP9 CRF30 在 disposal2/3 夹具上透明区 RGB 有 15–18 的固有漂移（CLI 18.45/15.02 vs tgtv 15.83/15.92，两栈同档），Phase 5 定的 `THRESH_TRANS_KEPT_MAD=12` 在这类夹具上会误报；意外预乘的真实量级 ≥100（白底拉黑），故阈值调整为 40，兼顾两头。
+4. `pytest tests/` 89/89 通过（Phase 1–5 回归不受影响）。
 
 ---
 

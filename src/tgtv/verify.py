@@ -54,7 +54,12 @@ THRESH_MID_BAND_RATIO = 0.005  # 可见晕环（32<=a<=223）占比上限
 THRESH_VISIBLE_MAD = 8.0       # 可见区 RGB 平均绝对差上限（有损）
 THRESH_ALPHA_AGREE = 0.99      # alpha 阈值化一致率下限
 THRESH_PTS_TOL = 0.001         # PTS 逐帧容差（秒）
-THRESH_TRANS_KEPT_MAD = 12.0   # 透明区 RGB 与源的平均绝对差上限（保留底色）
+# 透明区 RGB 与源的平均绝对差上限（保留底色 / 意外预乘检测）。
+# 校准依据（2026-10-03 Phase 6 等价性对照，test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md）：
+# VP9 CRF30 在饱和色内容 + 大透明区夹具（disposal2/3）上，透明区 RGB 有 15–18 的
+# 固有漂移（ffmpeg CLI 产物 18.45 / 15.02，tgtv 15.83 / 15.92，同档等价）；
+# 而真正的意外预乘（旧 out.webm bug）把白底拉到黑，MAD ≥ 100。40 位于两者之间。
+THRESH_TRANS_KEPT_MAD = 40.0
 THRESH_BLACK_MEAN = 10.0       # 黑底路径透明区 RGB 均值上限
 THRESH_MP4_BLACK_MEAN = 20.0   # mp4 透明区黑判定（yuv420p 往返放宽）
 THRESH_DURATION_TOL = 0.01     # 总时长容差（秒）
@@ -320,6 +325,7 @@ def verify(
                 mad = float(np.abs(trans_rgb_out.astype(int) - trans_rgb_src.astype(int)).mean())
                 stats["transparent_rgb_mad_vs_source"] = mad
                 black_mean = float(trans_rgb_out.mean())
+                stats["transparent_rgb_mean"] = black_mean
                 report.checks.append(Check(
                     "透明区 RGB 保持源 GIF 底色（无意外预乘）", mad < THRESH_TRANS_KEPT_MAD,
                     f"与源平均差 {mad:.2f}；透明区均值 {black_mean:.1f}"

@@ -1,9 +1,9 @@
 # tgtv —— 透明 GIF → 带 alpha 的视频（纯 Python 栈，无需系统 ffmpeg）
 #
-# 版本策略（docs/python-only-refactor-analysis.md 附录 B.2，零校准规则）：
-#   requires-python >= 3.11、av >= 18,< 19 是本文运行时实测的基线组合。
-#   升级到 Python 3.12 + av 19（FFmpeg 8.1）前，须在目标机器上重跑
-#   docs/probes/2026-10-03-pystack-probe.py 并全绿（§3.4 已静态核验能力面一致）。
+# 版本策略（docs/decisions.md，零校准规则）：
+#   requires-python >= 3.11、av >= 18, < 19 是运行时实测的基线组合。
+#   升级到 Python 3.12 + av 19（FFmpeg 8.1）前，须按 docs/decisions.md
+#   的升级清单在目标机器上重跑 docs/probes/ 探测脚本并全绿。
 
 [build-system]
 requires = ["hatchling"]

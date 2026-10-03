@@ -1,7 +1,7 @@
 """Phase 2 验收测试：GIF 读取层与旧 ffmpeg CLI 回归数值的一致性。
 
 夹具全部由 tests/make_fixtures.py 现场生成（Pillow + 手写 GIF89a 编码器），
-基准数值来自 2026-10-02 的 ffmpeg CLI 回归（test-reports/2026-10-02-matrix.md §15）
+基准数值来自 2026-10-02 的 ffmpeg CLI 回归（数字见 references/sizing.md 历史基线与 git 历史）
 与 tests/README.md 的夹具表——**数值一致 = 新读取层与旧栈语义等价**。
 
 运行方式（开发环境，无需系统 ffmpeg）：

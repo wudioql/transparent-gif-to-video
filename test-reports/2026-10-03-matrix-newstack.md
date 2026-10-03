@@ -112,7 +112,7 @@
   [PASS] 奇数尺寸 / MP4 预检拒绝奇数尺寸                                      宽 999 不是偶数：yuv420p 的 2×2 色度抽样要求宽高均为偶数（黑底 MP4 路径）。不缩放、不裁切、不补边。
   [PASS] 奇数尺寸 / MP4 拒绝后零产出                                        输出文件 不存在
   [INFO] 奇数尺寸 / 危险对照已结构性消灭                                        旧栈省略 format=yuv420p 会静默产出 yuv444p（High 4:4:4）；新栈 build_plan 预检先行拒绝，不存在绕过路径
-  [INFO] 分组 7：HAP 尺寸约束                                            随 Phase 0 决策（HAP 移除）下线，见 docs/python-only-refactor-analysis.md 附录 A
+  [INFO] 分组 7：HAP 尺寸约束                                            随 Phase 0 决策（HAP 移除）下线，见 docs/decisions.md
 
 分组 8：含空格 / 中文 / 括号 / 方括号的路径
 转换计划（未执行）：
@@ -133,5 +133,5 @@
 ============================================================================================================
 通过 96 / 失败 0 / 说明 2
   INFO: 奇数尺寸 / 危险对照已结构性消灭  旧栈省略 format=yuv420p 会静默产出 yuv444p（High 4:4:4）；新栈 build_plan 预检先行拒绝，不存在绕过路径
-  INFO: 分组 7：HAP 尺寸约束  随 Phase 0 决策（HAP 移除）下线，见 docs/python-only-refactor-analysis.md 附录 A
+  INFO: 分组 7：HAP 尺寸约束  随 Phase 0 决策（HAP 移除）下线，见 docs/decisions.md
 ```

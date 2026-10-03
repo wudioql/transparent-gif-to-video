@@ -1,6 +1,6 @@
 """能力探测（只读）：替代旧流程的 ``ffmpeg -encoders`` 预检。
 
-职责（对应 docs/python-only-refactor-analysis.md §6.3 映射表）：
+职责：
 
 1. **encoder 可用性** —— 对每条 FormatSpec 用 writer 将要使用的确切配置
    （codec + pix_fmt + writer_options）尝试创建并打开 encoder。

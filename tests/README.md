@@ -8,7 +8,7 @@
 - 边界夹具矩阵：`python tests/run_matrix.py` **96 通过 / 0 失败 / 2 说明**（执行层即 tgtv；报告 [`../test-reports/2026-10-03-matrix-newstack.md`](../test-reports/2026-10-03-matrix-newstack.md)）。
 - 迁移期等价性对照：`python tests/cross_check_vs_ffmpeg.py` **17/17 组、137/137 项**（同参数下 tgtv vs ffmpeg 7.0.2 CLI 产物；报告 [`../test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md`](../test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md)）。
 - sizing 数字校准：`python tests/calibrate_sizing.py`（双栈；报告 [`../test-reports/2026-10-03-sizing-calibration.md`](../test-reports/2026-10-03-sizing-calibration.md)）。
-- 旧栈历史基线（Windows BtbN FFmpeg 9.0.1，通过 59/0）：[`../test-reports/2026-10-02-matrix.md`](../test-reports/2026-10-02-matrix.md)。
+- 旧栈数字基线（Windows BtbN FFmpeg 9.0.1，通过 59/0）已并入 `references/sizing.md` 的「历史基线」表；完整旧报告见 git 历史。
 
 ## 夹具（自动生成，全部覆盖）
 

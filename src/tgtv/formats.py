@@ -19,7 +19,7 @@ writer_options / muxer_options 与旧 ffmpeg 命令模板逐项对应：
       -pix_fmt yuv420p（唯一不透明路径）                   →  mp4-black
     -c:v hap -format hap_alpha ...                       →  hap（已移除，见下）
 
-HAP 说明（Phase 0 决策，docs/python-only-refactor-analysis.md 附录 A）：
+HAP 说明（Phase 0 决策，docs/decisions.md）：
 PyAV wheel 不含 hap encoder（2026-10-03 实测 av 18.1.0，§3.4 静态核验 av 19.0.1
 同样缺失），HAP 已从 Python 栈矩阵移除。probe 对 HAP 请求如实报缺并停止，
 不偷换格式（维持旧 skill「缺 encoder 就停止」的硬规则）。

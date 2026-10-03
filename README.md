@@ -68,7 +68,7 @@ tgtv verify output.webm --source input.gif
 - 新栈回归矩阵（96 项断言，无系统 ffmpeg）：[`test-reports/2026-10-03-matrix-newstack.md`](test-reports/2026-10-03-matrix-newstack.md)
 - 迁移期等价性对照（17 组 × 8 维度，tgtv vs ffmpeg 7.0.2 CLI 同参数）：[`test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md`](test-reports/2026-10-03-pyav-vs-ffmpeg-cli.md)
 - sizing 数字新栈校准（双栈）：[`test-reports/2026-10-03-sizing-calibration.md`](test-reports/2026-10-03-sizing-calibration.md)
-- 旧栈历史基线（Windows BtbN FFmpeg 9.0.1）：[`test-reports/2026-10-02-matrix.md`](test-reports/2026-10-02-matrix.md)
+- 旧栈数字已并入 `references/sizing.md` 的「历史基线」表（完整旧报告见 git 历史）。
 
 运行时依赖：Python ≥3.11、`av>=18,<19`（PyAV，自带 FFmpeg 库的 wheel）、`numpy>=1.26`。开发附加：pytest、Pillow（夹具）、imageio-ffmpeg（迁移期对照）。
 

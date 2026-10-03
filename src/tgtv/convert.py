@@ -6,7 +6,7 @@
 codec / pix_fmt / muxer / options 字段上。Phase 1 的 probe 用**同一份配置**
 做过 open 验证，因此「probe 通过 ⇒ writer 可用」。
 
-旧命令语义映射（docs/python-only-refactor-analysis.md §6.3）：
+旧命令语义映射：
 
     -n（默认拒绝覆盖）/ -y           →  输出存在且未获 --overwrite 时拒绝执行
     计划展示并等待明确确认            →  render_plan + CLI 的确认闸（--yes / 交互 y）

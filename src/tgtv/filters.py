@@ -12,7 +12,7 @@
   语义）；非二值 alpha 为真预乘。
 - **不实现** ``setparams=alpha_mode=straight``：它只写帧元数据，不影响像素；
   Matroska 的 ``AlphaMode=1`` 由复用器在写 WebM alpha 时自动声明。差异在
-  回归中断言像素级等价（docs/python-only-refactor-analysis.md §6.3）。
+  回归中断言像素级等价。
 - 黑色归一化**只改变忽略 alpha 的播放端所显示的那层 RGB**，不修复播放器的
   alpha 兼容性——口径与旧 skill 完全一致。
 - 仅允许用于 VP8/VP9 链路（vp9 / vp9-lossless / vp8）；MOV 类路径维持

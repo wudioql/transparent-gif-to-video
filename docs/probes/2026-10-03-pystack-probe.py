@@ -10,7 +10,7 @@ transparent-gif-to-video skill 的全部运行时职责。
     pip install av pillow numpy imageio-ffmpeg
     python docs/probes/2026-10-03-pystack-probe.py
 
-配套结论见 docs/python-only-refactor-analysis.md。
+配套结论与升级清单见 docs/decisions.md。
 """
 
 import os

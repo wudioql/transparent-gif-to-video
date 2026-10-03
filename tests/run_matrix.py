@@ -12,8 +12,7 @@
   - 「对照：不带 -ignore_loop 也是一个周期」→ av.open 默认 options 的行为；
   - 「危险对照：-ignore_loop 0 会无限重复」→ options={"ignore_loop": "0"}
     配帧数上限读到 >1 周期即证（不再依赖 8 秒超时挂起）。
-  - HAP 尺寸组随 Phase 0 决策（HAP 移除，docs/python-only-refactor-analysis.md
-    附录 A）整体下线；
+  - HAP 尺寸组随 Phase 0 决策（HAP 移除，docs/decisions.md）整体下线；
   - 「MP4 省略 format=yuv420p 静默产出 yuv444p」的危险对照不再存在——
     新栈的预检在写入前拒绝奇数尺寸，该路径被结构性消灭。
 
@@ -305,7 +304,7 @@ def main():
     t_edge_and_rgb(fx, tmp)
     print("\n分组 6：奇数 / 非 4 倍数尺寸")
     t_odd_sizes(fx, tmp)
-    info("分组 7：HAP 尺寸约束", "随 Phase 0 决策（HAP 移除）下线，见 docs/python-only-refactor-analysis.md 附录 A")
+    info("分组 7：HAP 尺寸约束", "随 Phase 0 决策（HAP 移除）下线，见 docs/decisions.md")
     print("\n分组 8：含空格 / 中文 / 括号 / 方括号的路径")
     t_weird_path(fx, tmp)
 

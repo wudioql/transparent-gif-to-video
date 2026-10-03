@@ -101,6 +101,17 @@ def test_vp9_pts_passthrough_vardur(fx, tmp_path):
     assert pts == [0.0, 0.01, 0.04, 0.09, 0.19]  # 逐帧保留，未平均成 CFR
 
 
+@pytest.mark.parametrize("fmt,ext", [("vp9", "webm"), ("mp4-black", "mp4")])
+def test_last_frame_duration_preserved(fx, tmp_path, fmt, ext):
+    """回归：libvpx/x264 包在 flush 吐出且 duration=0，不写回则 WebM 容器
+    Duration=末帧 pts+1tick（3×100ms 素材缩成 0.21s，CLI 基准 0.30s）。
+    2026-10-03 由 tgtv verify 的「总时长与源一致」检查发现。"""
+    _convert(fx["binary"], tmp_path / f"d.{ext}", fmt)
+    with av.open(str(tmp_path / f"d.{ext}")) as c:
+        got = c.duration / 1_000_000
+    assert abs(got - 0.30) < 0.01
+
+
 def test_vp9_default_keeps_source_background_rgb(fx, tmp_path):
     """默认路径：透明区底层 RGB 保持源 GIF 白色（未被预乘/涂黑）。"""
     _convert(fx["binary"], tmp_path / "binary.webm", "vp9")

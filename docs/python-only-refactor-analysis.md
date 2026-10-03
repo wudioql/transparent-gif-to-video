@@ -328,7 +328,7 @@ docs/probes/         # 本次分析证据（已入库）
 | 2 GIF 读取层（source.py） | ✅ 2026-10-03 | 验收记录见下 |
 | 3 编写器矩阵（writers/） | ✅ 2026-10-03 | 验收记录见下（实现简化为注册表驱动的单一通用 writer） |
 | 4 黑底归一化（filters.py） | ✅ 2026-10-03 | 验收记录见下 |
-| 5 验证模块（verify.py） | ⬜ | |
+| 5 验证模块（verify.py） | ✅ 2026-10-03 | 验收记录见下（顺带发现并修复末帧时长回归） |
 | 6 回归迁移（run_matrix.py） | ⬜ | |
 | 7 质量口径校准（sizing 数字） | ⬜ | |
 | 8 文档重写（SKILL/README/references） | ⬜ | |
@@ -372,6 +372,21 @@ docs/probes/         # 本次分析证据（已入库）
 
 ### Phase 3+4 验收记录（2026-10-03）
 
+交付物：
+
+- `src/tgtv/verify.py`：`verify(output, source=None, expected_black=False) → VerifyReport` + `render_report`。规则全集 = 旧 SKILL.md §4：完整解码；VP9/VP8 **显式 libvpx 解码**（`EXPLICIT_DECODERS`，不按扩展名猜——§4.2 陷阱结构性规避）；像素格式确有 alpha 平面；全帧扫描 alpha_min<255（首帧不透明素材也能发现透明）；半透明轻重区分（32–223 可见晕环占比 <0.5%，1–31/224–254 轻微取整忽略）；提供源时：帧数/尺寸/PTS 逐帧/总时长一致、底色策略（默认「透明区 RGB 与源一致」= 意外预乘检测器；`expected_black`/mp4-black 归黑）、可见区 MAD/PSNR；png-mov/qtrle RGBA 域逐像素一致；ffv1 yuva444p **原生域**逐像素一致（按平面提取，规避 PyAV `to_ndarray` 不支持 planar yuva 的问题）。格式身份按容器 codec + 编码器→解码器名映射（libx264→h264 等）识别，不用扩展名。
+- `src/tgtv/cli.py`：`tgtv verify <output> [--source GIF] [--black] [--json]`，退出码 0/1；convert 完成提示改为可直接复制的 verify 命令。
+- `tests/test_verify.py`：19 项；`tests/test_convert.py` 增末帧时长回归 2 项。
+
+验收结果（89/89 = Phase 1–5 合计）：
+
+1. **正路径**：vp9 默认 11/11 通过（decoder=libvpx-vp9、yuva420p、全帧 alpha_min=0、PTS/时长/底色/保真全过）；vp9-lossless/vp8/prores4444/png-mov/qtrle/ffv1 全部带源通过；png-mov 含「RGBA 域逐像素一致」、ffv1 含「yuva444p 原生域逐像素一致」专项。
+2. **底色语义双向**：`--black` 产物 + `--black` 期望通过（透明区均值 0.1、可见区 MAD 0.60）；**同一产物不带 `--black` 则失败**并在 detail 提示修正期望——这正是 2026-10-02 报告 §9 out.webm 意外预乘 bug 的自动检测器；mp4-black 通过（无 alpha 判为预期、透明区黑、不适用项自动跳过）。
+3. **无源模式**：仅做输出自身断言（完整解码/解码器/alpha），不含比对项。
+4. **CLI**：通过 exit 0、失败 exit 1、`--json` 可解析且含 stats 全量数字。
+5. **顺带发现并修复真回归——末帧时长**：`tgtv verify` 的「总时长与源一致」发现 3×100ms 素材的 WebM 容器 Duration=0.21s（CLI 基准 0.30s）。根因：libvpx/x264 将帧缓冲到 flush 才吐包且包 duration=0，Matroska 的 BlockDuration/Duration 元素只记末帧 pts+1tick。修复：convert 按 pts 建「源帧→duration」映射，mux 前写回包上（转换中循环内拿不到包，此前对 packet 的赋值从未执行）。修复后 WebM/MP4 容器时长与源一致（0.300s），修复前产物被 verify 精确报警（"输出 0.210s / 源 0.300s"）。回归测试 `test_last_frame_duration_preserved` 钉住。
+
+
 **设计简化**：原计划的 `writers/` 八个模块收敛为 `convert.py` 一个**注册表驱动的通用 writer**——8 条路径的执行流程完全同构（add_stream → 配置 → 逐帧 reformat + pts 透传 → encode/mux → flush），差异全部落在 `formats.py` 注册表字段上；Phase 1 的 probe 用同一份配置做过 open 验证，「probe 通过 ⇒ writer 可用」不漂移。
 
 交付物：
@@ -388,6 +403,22 @@ docs/probes/         # 本次分析证据（已入库）
 3. **底色语义**：默认路径透明区保持源 GIF 白色（>245）；`--black` 透明区 RGB≈0、alpha 阈值化一致 >99%、可见区均差 <8；mp4-black 透明区呈现黑（<20）、可见区不劣化。
 4. **硬边界**：hap 请求报「已移除」不偷换；未知格式报错；黑底请求 prores 报「仅支持 vp9/vp9-lossless/vp8」；999×999 的 mp4-black 在**预检阶段**拒绝且零文件产出；999×999 的 vp9 正常且画布不变。
 5. **覆盖/确认不变量**：已存在输出默认拒绝且原文件未被触碰；`--overwrite` 明确确认后成功；输出=输入拒绝；`--dry-run` 零写入；非交互无 `--yes` 拒绝（含管道喂 yes）；交互 yes/no 路径正确。
+
+### Phase 5 验收记录（2026-10-03）
+
+交付物：
+
+- `src/tgtv/verify.py`：`verify(output, source=None, expected_black=False) → VerifyReport` + `render_report`。规则全集 = 旧 SKILL.md §4：完整解码；VP9/VP8 **显式 libvpx 解码**（`EXPLICIT_DECODERS`，不按扩展名猜——§4.2 陷阱结构性规避）；像素格式确有 alpha 平面；全帧扫描 alpha_min<255（首帧不透明素材也能发现透明）；半透明轻重区分（32–223 可见晕环占比 <0.5%，1–31/224–254 轻微取整忽略）；提供源时：帧数/尺寸/PTS 逐帧/总时长一致、底色策略（默认「透明区 RGB 与源一致」= 意外预乘检测器；`expected_black`/mp4-black 归黑）、可见区 MAD/PSNR；png-mov/qtrle RGBA 域逐像素一致；ffv1 yuva444p **原生域**逐像素一致（按平面提取，规避 PyAV `to_ndarray` 不支持 planar yuva 的问题）。格式身份按容器 codec + 编码器→解码器名映射（libx264→h264、libvpx-vp9→vp9、libvpx→vp8、prores_ks→prores）识别，不用扩展名。
+- `src/tgtv/cli.py`：`tgtv verify <output> [--source GIF] [--black] [--json]`，退出码 0/1；convert 完成提示改为可直接复制的 verify 命令。
+- `tests/test_verify.py`：19 项；`tests/test_convert.py` 增末帧时长回归 2 项。
+
+验收结果（89/89 = Phase 1–5 合计）：
+
+1. **正路径**：vp9 默认 11/11 通过（decoder=libvpx-vp9、yuva420p、全帧 alpha_min=0、PTS/时长/底色/保真全过）；vp9-lossless/vp8/prores4444/png-mov/qtrle/ffv1 全部带源通过；png-mov 含「RGBA 域逐像素一致」、ffv1 含「yuva444p 原生域逐像素一致」专项。
+2. **底色语义双向**：`--black` 产物 + `--black` 期望通过（透明区均值 0.1、可见区 MAD 0.60）；**同一产物不带 `--black` 则失败**并在 detail 提示修正期望——这正是 2026-10-02 报告 §9 out.webm 意外预乘 bug 的自动检测器；mp4-black 通过（无 alpha 判为预期、透明区黑、不适用项自动跳过）。
+3. **无源模式**：仅做输出自身断言（完整解码/解码器/alpha），不含比对项。
+4. **CLI**：通过 exit 0、失败 exit 1、`--json` 可解析且含 stats 全量数字。
+5. **顺带发现并修复真回归——末帧时长**：`tgtv verify` 的「总时长与源一致」发现 3×100ms 素材的 WebM 容器 Duration=0.21s（ffmpeg CLI 基准 0.30s）。根因：libvpx/x264 将帧缓冲到 flush 才吐包且包 duration=0，Matroska 的 BlockDuration/容器 Duration 只记到末帧 pts+1tick；且转换循环内拿不到包，此前对 packet 的赋值从未执行。修复：convert 按 pts 建「源帧→duration」映射，在 mux 前写回包上（帧侧同时设置 frame.duration）。修复后 WebM/MP4 容器时长与源一致（0.300s），修复前产物被 verify 精确报警（"输出 0.210s / 源 0.300s"）。回归测试 `test_last_frame_duration_preserved`（webm+mp4）钉住。
 
 ---
 

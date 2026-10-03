@@ -207,18 +207,36 @@ def execute(plan: ConvertPlan) -> ConvertResult:
         cc.time_base = plan.info.time_base  # 与 GIF demuxer 一致（-enc_time_base demux）
         cc.options = dict(spec.writer_options)
 
+        # 逐帧时长保留（含最后一帧）：libvpx/x264 会缓冲帧、包集中在 flush
+        # 吐出且 duration=0，因此按 pts 建「源帧 → duration」映射，在 mux 前
+        # 写回包上——Matroska 的 BlockDuration 与容器 Duration 由此得到
+        # 正确值（实测：不设置时 3×100ms 素材的 WebM 总时长会缩成 210ms，
+        # 而 ffmpeg CLI 产出 300ms；2026-10-03 定位）。
+        duration_by_pts: dict[int, int] = {}
+
+        def _mux(pkt) -> None:
+            if pkt is not None and pkt.pts is not None:
+                d = duration_by_pts.get(int(pkt.pts))
+                if d and d > 0:
+                    pkt.duration = d
+            container.mux(pkt)
+
         for gf in source.iter_frames():
+            if gf.frame.duration:
+                duration_by_pts[int(gf.pts)] = int(gf.frame.duration)
             frame = gf.frame
             if plan.black_background or spec.key == "mp4-black":
                 frame = filters.apply_black_background(frame)
             frame = frame.reformat(format=spec.pix_fmt)
             frame.pts = gf.pts  # 原样透传（-fps_mode passthrough）
             frame.time_base = gf.time_base
+            if gf.frame.duration:
+                frame.duration = int(gf.frame.duration)
             for pkt in stream.encode(frame):
-                container.mux(pkt)
+                _mux(pkt)
             frames_written += 1
         for pkt in stream.encode(None):  # flush
-            container.mux(pkt)
+            _mux(pkt)
         container.close()
         container = None
     except ConvertError:

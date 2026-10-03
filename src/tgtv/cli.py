@@ -1,4 +1,4 @@
-"""tgtv 命令行入口（Phase 1–3）。
+"""tgtv 命令行入口（Phase 1–5）。
 
 子命令：
     tgtv probe [--json] [--require KEY[,KEY...]] [--size WxH]
@@ -11,13 +11,15 @@
         确认闸：交互终端提示输入 yes；非交互环境（agent）须先另行向用户
         展示计划并获得确认，再用 --yes。--dry-run 只展示计划。
 
+    tgtv verify <output> [--source <input.gif>] [--black] [--json]
+        转换后验证（Phase 5）。规则 = 旧 SKILL.md §4：完整解码、
+        VP9/VP8 显式 libvpx 解码、全帧 alpha 扫描、半透明轻重区分、
+        PTS/尺寸/底色/可见区保真（提供 --source 时）。
+
 不变量（落在 CLI 层，见分析文档 §6.3）：
     - 输出已存在时默认拒绝覆盖（旧 -n 语义），仅 --overwrite 明确确认后覆盖；
     - 缺 encoder / 尺寸约束不满足 → 停止并报告，不偷换格式、不缩放裁切；
     - --black（黑色归一化）仅 VP8/VP9 链路可用，且必须显式要求。
-
-后续阶段将按 docs/python-only-refactor-analysis.md §7 增补：
-    tgtv verify <output> ...       （Phase 5：全帧 alpha/时长/像素断言）
 """
 
 from __future__ import annotations
@@ -28,9 +30,10 @@ import re
 import sys
 import unicodedata
 
-from . import __version__, convert, formats, probe
+from . import __version__, convert, formats, probe, verify as verify_mod
 from .convert import ConvertError
 from .source import GifSourceError
+from .verify import VerifyError
 
 _SIZE_RE = re.compile(r"^(\d+)x(\d+)$")
 
@@ -97,6 +100,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_conv.add_argument("--json", action="store_true", help="计划与结果用 JSON 输出")
     p_conv.set_defaults(func=_cmd_convert)
+
+    p_ver = sub.add_parser(
+        "verify",
+        help="转换后验证：完整解码 / 全帧 alpha / PTS / 底色 / 可见区保真",
+    )
+    p_ver.add_argument("output", help="转换产物路径（webm/mov/mkv/mp4）")
+    p_ver.add_argument(
+        "--source", metavar="GIF",
+        help="源 GIF；提供后启用 PTS/尺寸/底色/保真的逐帧比对",
+    )
+    p_ver.add_argument(
+        "--black", action="store_true",
+        help="产物是 --black / mp4-black 转换：透明区 RGB 归黑是预期行为",
+    )
+    p_ver.add_argument("--json", action="store_true", help="报告用 JSON 输出")
+    p_ver.set_defaults(func=_cmd_verify)
     return parser
 
 
@@ -266,8 +285,39 @@ def _cmd_convert(args: argparse.Namespace) -> int:
             f"{result.output_size_bytes / 1024:.1f} KiB / "
             f"{'alpha 保留' if result.alpha_preserved else '无 alpha（黑底 MP4，符合预期）'}）"
         )
-        print("提示：可用 `tgtv verify` 做转换后验证（Phase 5 提供）。")
+        print(f"提示：运行 `tgtv verify {result.output_path} --source {plan.input_path}"
+              + (" --black" if plan.black_background or plan.spec.key == "mp4-black" else "")
+              + "` 做转换后验证。")
     return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    report = verify_mod.verify(
+        args.output,
+        args.source,
+        expected_black=args.black,
+    )
+    if args.json:
+        print(json.dumps({
+            "output": str(report.output_path),
+            "source": str(report.source_path) if report.source_path else None,
+            "codec": report.codec_name,
+            "decoder": report.decoder_used,
+            "frames": report.frames,
+            "canvas": list(report.canvas),
+            "duration_seconds": report.duration_seconds,
+            "pts_seconds": report.pts_seconds,
+            "decoded_pix_fmts": sorted(report.decoded_pix_fmts),
+            "stats": report.stats,
+            "checks": [
+                {"name": c.name, "passed": c.passed, "detail": c.detail}
+                for c in report.checks
+            ],
+            "passed": report.passed,
+        }, ensure_ascii=False, indent=2))
+    else:
+        print(verify_mod.render_report(report))
+    return 0 if report.passed else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -278,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return args.func(args)
-    except (ConvertError, GifSourceError) as e:
+    except (ConvertError, GifSourceError, VerifyError) as e:
         print(str(e), file=sys.stderr)
         return 1
 

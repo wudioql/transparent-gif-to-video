@@ -1,0 +1,101 @@
+
+================================================================================================
+A. 环境报告
+================================================================================================
+python          : 3.11.2 linux
+system ffmpeg   : （不存在 —— 本探测刻意在无系统 ffmpeg 的环境运行）
+av (PyAV)       : 18.1.0
+内置 ffmpeg 库   : {'libavutil': '60.26.102', 'libavcodec': '62.28.102', 'libavformat': '62.12.102', 'libavdevice': '62.3.102', 'libavfilter': '11.14.102', 'libswscale': '9.5.102', 'libswresample': '6.3.102'}
+pillow          : 12.3.0
+numpy           : 2.4.6
+imageio-ffmpeg  : 0.6.0
+  [PASS] A1 沙箱无系统 ffmpeg（探测前提）                                    若本机有系统 ffmpeg，探测结论仍成立但不再能证明『无系统 ffmpeg』
+
+================================================================================================
+B. PyAV 编解码器可用性矩阵（skill 需要的 8 个 encoder + 3 个 decoder）
+================================================================================================
+  [PASS] B  encoder libvpx-vp9                                    
+  [PASS] B  encoder libvpx                                        
+  [PASS] B  encoder prores_ks                                     
+  [FAIL] B  encoder hap                                           UnknownCodecError
+  [PASS] B  encoder png                                           
+  [PASS] B  encoder qtrle                                         
+  [PASS] B  encoder ffv1                                          
+  [PASS] B  encoder libx264                                       
+  [PASS] B  decoder libvpx-vp9                                    
+  [PASS] B  decoder libvpx                                        
+  [PASS] B  decoder gif                                           
+  [PASS] B  decoder hap                                           
+
+================================================================================================
+C. GIF 解码保真（PyAV vs ffmpeg CLI 回归数值）
+================================================================================================
+  [PASS] C1 变帧时长 PTS 逐帧保留                                         [0.0, 0.03, 0.04, 0.09, 0.19]
+  [PASS] C2 逐帧存在透明像素                                              [0, 0, 0, 0, 0]
+  [PASS] C3 无限循环 GIF 不带选项也是单周期（demuxer 默认 true，与 CLI 一致）          5 帧
+  [PASS] C4 disposal=1 合成与 ffmpeg CLI 回归数值一致                      [6060, 6860, 7410] (期望 [6060, 6860, 7410])
+  [PASS] C4 disposal=2 合成与 ffmpeg CLI 回归数值一致                      [6060, 1600, 1600] (期望 [6060, 1600, 1600])
+  [PASS] C4 disposal=3 合成与 ffmpeg CLI 回归数值一致                      [6060, 1600, 1600] (期望 [6060, 1600, 1600])
+
+================================================================================================
+D. 默认路径闭环：GIF → VP9 yuva420p WebM(alpha) → 验证
+================================================================================================
+  [PASS] D1 VP9 yuva420p 编码成功                                     
+  [PASS] D2 显式 libvpx-vp9 解码得到 yuva420p（alpha 平面在）                {'yuva420p'}
+  [PASS] D3 输出 PTS 逐帧等于源（变时长未被平均）                                 [0.0, 0.03, 0.04, 0.09, 0.19]
+  [PASS] D4 输出含真实透明像素（全帧扫描 alpha_min=0）                           alpha_min=0
+  [PASS] D5 陷阱复现：不指定 decoder 时读出 yuv420p（无 alpha）                 {'yuv420p'}
+  [PASS] D6 容器含 AlphaMode(0x53C0)                                 
+  [PASS] D7 容器含 BlockAdditional(0x75A1)（WebM alpha 实际载体）          
+
+================================================================================================
+E. 其余编码路径矩阵
+================================================================================================
+  [PASS] E  vp8-crf30   编码+解码 5 帧, alpha=在                        
+  [PASS] E  vp9-loss    编码+解码 5 帧, alpha=在                        
+  [PASS] E  prores4444  编码+解码 5 帧, alpha=在                        
+  [PASS] E  png-mov     编码+解码 5 帧, alpha=在                        
+  [PASS] E  qtrle       编码+解码 5 帧, alpha=在                        
+  [PASS] E  ffv1        编码+解码 5 帧, alpha=在                        
+  [PASS] E  x264-mp4    编码+解码 5 帧, alpha=无/全255                   
+
+================================================================================================
+F. 尺寸约束行为
+================================================================================================
+  [PASS] F1 VP9 999×999（奇数）编码成功（WebM 侧不设偶数约束，与文档一致）               
+  [PASS] F2 libx264 999×999 yuv420p 拒绝（硬失败保留）                     （报错为 ExternalError，文案不含 width/height not divisible by 2 → 需自行预检生成可读报错）
+
+================================================================================================
+G. 黑底归一化 filter 链（§3.0 原样迁移）
+================================================================================================
+  [PASS] G1 premultiply+setparams(alpha_mode) 链可用（FFmpeg 8.x 代系支持） 透明区RGB=[0. 0. 0.] 可见区=254.0
+
+================================================================================================
+H. imageio-ffmpeg 二进制（路线 A1：命令原样、仅换二进制来源）
+================================================================================================
+  binary: /tmp/probe/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2
+  version: ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 2000-2024 the FFmpeg developers
+  [PASS] H  encoder libvpx-vp9                                    
+  [PASS] H  encoder libvpx                                        
+  [PASS] H  encoder prores_ks                                     
+  [FAIL] H  encoder hap                                           
+  [PASS] H  encoder png                                           
+  [PASS] H  encoder qtrle                                         
+  [PASS] H  encoder ffv1                                          
+  [PASS] H  encoder libx264                                       
+  [PASS] H9 README 默认命令原样执行成功                                     
+  [PASS] H10 §4.2 验证命令原样执行且 YMIN<255                              采样 5 帧 min=0
+  [PASS] H11 已知缺口：ffmpeg 7.0.2 不支持 setparams=alpha_mode（版本兼容问题，非能力缺失） exit=8
+
+================================================================================================
+I. Windows wheel 可用性（文档目标环境为 Windows）
+================================================================================================
+  [PASS] I  av             19.0.1 提供 win_amd64 wheel              av-19.0.1-cp312-abi3-win_amd64.whl
+  [PASS] I  imageio-ffmpeg 0.6.0 提供 win_amd64 wheel               imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl
+  [PASS] I  pillow         12.3.0 提供 win_amd64 wheel              pillow-12.3.0-cp310-cp310-win_amd64.whl
+  [PASS] I  numpy          2.5.3 提供 win_amd64 wheel               numpy-2.5.3-cp312-cp312-win_amd64.whl
+
+================================================================================================
+总计：49 PASS / 2 FAIL
+  FAIL: B  encoder hap  UnknownCodecError
+  FAIL: H  encoder hap  

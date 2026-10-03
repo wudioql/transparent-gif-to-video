@@ -1,6 +1,6 @@
 ---
 name: transparent-gif-to-video
-description: 使用系统 ffmpeg 将单个透明 GIF 转换为带 alpha 的 VP9/VP8 WebM、ProRes 4444、HAP Alpha MOV、PNG-in-MOV、qtrle 或 FFV1；也可在用户明确选择黑底 MP4 后输出不透明 H.264。转换前必须展示计划并等待明确确认。
+description: 使用纯 Python 栈（tgtv 包：PyAV + NumPy，不依赖系统 ffmpeg）将单个透明 GIF 转换为带 alpha 的 VP9/VP8 WebM、ProRes 4444、PNG-in-MOV、qtrle 或 FFV1；也可在用户明确选择黑底 MP4 后输出不透明 H.264。转换前必须展示计划并等待明确确认，转换后用 tgtv verify 验证。
 agent_created: true
 ---
 
@@ -8,203 +8,125 @@ agent_created: true
 
 ## 边界与硬规则
 
-本 skill 每次只处理一个 `.gif`，运行时唯一依赖是系统 `ffmpeg`。不恢复 Python、Pillow、NumPy、图片序列、批量转换、背景分析、`auto-edge` 或 `suggest-background`。
+本 skill 每次只处理一个 `.gif`。运行时唯一依赖是 **Python 栈**：`tgtv` 包（`av` 即 PyAV ≥18,<19 + `NumPy`，Python ≥3.11）。**不依赖系统 ffmpeg**，不使用 Pillow、图片序列、批量转换、背景分析、`auto-edge` 或 `suggest-background`。
 
-- 默认推荐 **VP9 WebM CRF 30**，保留 alpha。体积远小于无损格式，且 alpha 与 RGB 保真度明显优于 VP8（实测 PSNR 高约 7.6 dB，见 `test-reports/2026-10-02-matrix.md` §12/§13）。
-- **VP8/VP9 WebM 的 CRF 30 是唯一默认质量档位，不得主动上调。** 实测 CRF 40 会让 alpha 平面新增约 29 万个半透明像素（源为二值 alpha），且 VP8 上调至 CRF 40 仅再省 0.5% 体积。只有用户明确要求更小体积并接受画质折损时才讨论，见 `references/sizing.md`。
-- VP8/VP9 **默认保留源 GIF 的透明区底层 RGB**（不加任何 premultiply），最忠实于素材本身。**透明 RGB 黑色归一化必须经用户显式要求「黑底」才加入**，不得作为默认值。它只改变不支持 alpha 的播放端所显示的那层像素，不修复播放器兼容性。
-- 常见用途（读取逐帧内容）只需 alpha WebM 一条路径；ProRes / HAP / PNG-in-MOV / qtrle / FFV1 / 黑底 MP4 均为按需选择，不作为默认推荐。
-- GIF 原始帧时长必须保留；不得添加固定 `-r`。
-- 每次转换前必须展示计划并等待用户明确确认；能力检查和媒体读取是只读操作。
-- 默认 `-n` 拒绝覆盖；只有用户明确确认覆盖该具体路径，才使用 `-y`。
-- 不猜测背景色，不静默缩放或裁切；尺寸约束不满足时停止并说明。
-- `-ignore_loop 1` 只转换一个 GIF 动画周期。**绝不可写成 `-ignore_loop 0`**——那会让 GIF 的循环计数生效，无限循环素材会无限输出，命令永不结束（2026-10-02 实测确认）。带 `-ignore_loop 1` 在当前 FFmpeg 上即使去掉也仍是单周期（gif demuxer 该选项默认为 true），但必须保留，它同时锁死了未来默认值变化与显式取反的风险。
+- 一切操作通过 `tgtv` CLI 完成：`probe`（只读预检）→ `convert`（计划→确认→执行）→ `verify`（转换后验证）。
+- 默认推荐 **VP9 WebM CRF 30**，保留 alpha。体积远小于无损格式，且 alpha 与 RGB 保真度明显优于 VP8（实测 PSNR 高约 7 dB、可见晕环少四个数量级，见 `references/sizing.md`）。
+- **VP8/VP9 WebM 的 CRF 30 是唯一默认质量档位，不得主动上调。** 实测 CRF 40 省 40% 体积的代价是 alpha 平面新增约 168 万个半透明像素（源为二值 alpha 时即边缘晕环）；VP8 上调 CRF 体积一点不变。只有用户明确要求更小体积并接受画质折损时才讨论，见 `references/sizing.md`。
+- VP8/VP9 **默认保留源 GIF 的透明区底层 RGB**（不做任何预乘），最忠实于素材本身。**透明 RGB 黑色归一化（`--black`）必须经用户显式要求「黑底」才加入**，不得作为默认值。它只改变不支持 alpha 的播放端所显示的那层像素，不修复播放器兼容性。
+- 常见用途（读取逐帧内容）只需 alpha WebM 一条路径；ProRes / PNG-in-MOV / qtrle / FFV1 / 黑底 MP4 均为按需选择，不作为默认推荐。
+- GIF 原始帧时长必须逐帧保留（含最后一帧），不重采样成 CFR。
+- 每次转换前必须向用户展示计划并等待明确确认；`probe` 与 `--dry-run` 是只读操作。
+- **两段确认**：输出已存在时默认拒绝覆盖；确认执行计划（`--yes`）≠ 确认覆盖（`--overwrite`），两件事分开确认。
+- 不猜测背景色，不静默缩放或裁切；尺寸约束不满足时在**预检阶段**停止并说明，零文件产出。
+- 无限循环 GIF 只转换一个周期（读取层固定 `ignore_loop=1`，不存在取反风险）。
+- HAP 已从矩阵移除（PyAV wheel 不含 hap encoder）；用户要求 HAP 时如实说明并停止，**不偷换格式**。
 
-计划至少列出：输入绝对路径、格式/用途、有损或无损、输出绝对路径、覆盖行为，以及关键参数。计划必须明确写出**底色策略**：默认「保留源 GIF 底色」；只有用户明确要求黑底时，才写「透明 RGB 黑色归一化（黑色回退）」并注明它不会修复播放器的 alpha 兼容性。
+计划（`tgtv convert --dry-run` 的输出）至少包含：输入绝对路径与画布/帧数/时长、格式/用途、有损或无损、输出绝对路径、覆盖行为、底色策略与关键参数。计划必须明确写出**底色策略**：默认「保留源 GIF 底色」；只有用户明确要求黑底时才写「透明 RGB 黑色归一化（黑色回退）」并注明它不会修复播放器的 alpha 兼容性。
 
 ## 1. 只读预检
 
-```powershell
-ffmpeg -version
-ffmpeg -hide_banner -encoders
-ffmpeg -hide_banner -v error -ignore_loop 1 -i "C:\path\input.gif" -map 0:v:0 -f null NUL
+```bash
+tgtv probe                          # 全部格式能力 + 验证解码器 + 环境信息
+tgtv probe --require vp9            # 单格式预检，不满足则退出码 1
+tgtv probe --require mp4-black --size 999x999   # 尺寸约束预检（偶数校验）
+tgtv probe --json                   # 机读
 ```
 
-推荐 Windows 目标环境：BtbN FFmpeg 9.0 GPL static。按用户选择检查 encoder，不存在就停止，不偷偷换格式：
-
-| 输出 | 必需 encoder | 容器 |
-|---|---|---|
-| VP9 / VP9 lossless | `libvpx-vp9` | WebM |
-| VP8 | `libvpx` | WebM |
-| ProRes 4444 | `prores_ks` | MOV |
-| HAP Alpha | `hap` | MOV |
-| PNG-in-MOV | `png` | MOV |
-| qtrle | `qtrle` | MOV |
-| FFV1 | `ffv1` | MKV |
-| 明确黑底 MP4 | `libx264` | MP4 |
-
-HAP 还要检查目标尺寸是否满足当前 FFmpeg HAP encoder 的约束：**宽、高均须为 4 的倍数，任一不满足即失败**（2026-10-02 实测：1002×1000、1000×1002、998×998、1002×1002、999×999 全部失败；1000×1000 成功）。报错原文为 `Video size WxH is not multiple of 4.`。不满足时拒绝并报告原始错误，不缩放、不裁切。
+encoder 不存在就停止，不偷偷换格式。黑底 MP4 的偶数尺寸约束在 `probe --require ... --size WxH` 与 `convert` 的计划阶段都会检查：宽或高任一为奇数即拒绝（`yuv420p` 的 2×2 色度抽样要求），不缩放、不裁切、不补边。旧栈「省略 `format=yuv420p` 静默产出 yuv444p」的绕过路径在新栈**结构性不存在**（预检先行拒绝）。
 
 ## 2. 格式矩阵
 
-| 选择 | Alpha | 有损 | 用途与限制 |
+| 选择（`-f KEY`） | Alpha | 有损 | 用途与限制 |
 |---|---:|---:|---|
-| **VP9 WebM CRF 30（默认）** | 是 | 是 | 网页与读帧场景首选；现代浏览器需支持 WebM alpha |
-| VP9 lossless WebM | 是 | 否 | WebM 无量化；`yuva420p` 仍不是原始 RGBA 字节逐点保证 |
-| VP8 WebM | 是 | 是 | 体积可更小，但实测画质与 alpha 保真明显劣于 VP9 CRF 30，非默认 |
-| ProRes 4444 MOV | 是 | 视觉无损 | 剪辑/合成高码率母版；使用 8-bit alpha |
-| HAP Alpha MOV | 是 | 是/编码器相关 | 实时播放、VJ、部分剪辑软件；不保证比 FFV1/PNG 更小，也不如 ProRes 4444 普遍 |
-| PNG-in-MOV | 是 | 否 | 无损交换，通常很大 |
-| qtrle MOV | 是 | 否 | QuickTime Animation 工作流 |
-| FFV1 MKV | 是 | 否 | 开源无损归档 |
-| **黑底 H.264 MP4** | **否** | 是 | 仅用户明确选择；永久丢失 alpha |
+| **vp9（默认）** | 是 | 是 | 网页与读帧场景首选；现代浏览器需支持 WebM alpha |
+| vp9-lossless | 是 | 否 | WebM 无量化；`yuva420p` 仍不是原始 RGBA 字节逐点保证（4:2:0 表示限制） |
+| vp8 | 是 | 是 | 体积可更小，但实测画质与 alpha 保真明显劣于 VP9（PSNR 低约 7 dB，可见晕环高四个数量级），非默认 |
+| prores4444 | 是 | 视觉无损 | 剪辑/合成高码率母版；8-bit alpha |
+| png-mov | 是 | 否 | 无损交换，通常很大 |
+| qtrle | 是 | 否 | QuickTime Animation 工作流 |
+| ffv1 | 是 | 否 | 开源无损归档；yuva444p 同域逐像素无损 |
+| **mp4-black** | **否** | 是 | 仅用户明确选择；永久丢失 alpha；宽高必须均为偶数 |
 
-默认输出**保留源 GIF 的透明区底层 RGB**（通常接近白），与素材一致；只有用户明确要求「黑底」时才改用 §3.0 的黑色归一化。两者 alpha 掩码与可见像素完全相同，在正确合成 alpha 的播放端视觉一致，差别仅体现在忽略 alpha 的播放端。
+默认输出**保留源 GIF 的透明区底层 RGB**（通常接近白）；黑底（`--black` / `mp4-black`）只改变忽略 alpha 的播放端显示的那层像素。
 
-VP8/VP9 的 alpha 位于 WebM/Matroska `BlockAdditional`。`AlphaMode=1` 只声明 alpha，不能使不支持 `BlockAdditional` 的播放器显示透明。浏览器正确和显式 libvpx 解码正确，也不代表普通桌面播放器支持。
+VP8/VP9 的 alpha 位于 WebM/Matroska `BlockAdditional`，`AlphaMode=1` 由复用器自动声明。它不能使不支持 `BlockAdditional` 的播放器显示透明；浏览器与显式 libvpx 解码正确，也不代表普通桌面播放器支持。
 
-## 3. 命令模板
+## 3. 命令模板（agent 工作流）
 
-公共参数：
+### 3.0 标准流程：计划 → 确认 → 执行 → 验证
 
-```text
--hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux
+```bash
+# 1) 构建并展示计划（只读，不写任何文件）
+tgtv convert "input.gif" -o "output.webm" --dry-run
+
+# 2) 向用户展示计划，等待明确确认
+
+# 3) 确认后执行（非交互环境必须 --yes：计划已另行展示确认）
+tgtv convert "input.gif" -o "output.webm" --yes
+
+# 4) 转换后验证（convert 的完成提示会给出可直接复制的命令）
+tgtv verify "output.webm" --source "input.gif"
 ```
 
-确认覆盖后才把 `-n` 改为 `-y`。
+输出已存在时：默认拒绝且原文件不动；用户确认覆盖**该具体路径**后追加 `--overwrite`。交互终端会提示输入 `yes`；管道喂 `yes` 无效（设计如此——非交互环境的确认责任在 agent 与用户之间完成）。
 
-### 3.0 底色策略（默认保留 / 可选黑底）
+### 3.1 各格式
 
-**默认命令不加任何 RGB 处理 filter**——直接沿用源 GIF 的透明区底层 RGB。
-
-**可选：透明 RGB 黑色归一化（黑色回退）**。只有用户明确要求「黑底」时，才在 VP8/VP9 命令中插入：
-
-```text
--vf "format=rgba,premultiply=inplace=1:planes=0x7,setparams=alpha_mode=straight"
+```bash
+tgtv convert in.gif -o out.webm                          # VP9 CRF30（默认）
+tgtv convert in.gif -o out.webm -f vp9-lossless
+tgtv convert in.gif -o out.webm -f vp8
+tgtv convert in.gif -o out.mov -f prores4444
+tgtv convert in.gif -o out.mov -f png-mov
+tgtv convert in.gif -o out.mov -f qtrle
+tgtv convert in.gif -o out.mkv  -f ffv1
+tgtv convert in.gif -o out.mp4  -f mp4-black             # 唯一不透明路径
 ```
 
-对二值 alpha：alpha=0 的 RGB 归零，alpha=255 保持；`setparams` 将元数据标为 straight。alpha 掩码与可见像素不受影响。**它不是播放器兼容性修复**，只是让忽略 alpha 的播放端显示黑而非原 GIF 底色（本素材为白）。是否黑底必须写进计划并等待确认。
+黑底归一化（仅 VP8/VP9 链路）：`--black`。对二值 alpha 等价于「alpha=0 的 RGB 归零、alpha=255 保持」；alpha 掩码与可见像素不受影响。**它不是播放器兼容性修复**。是否黑底必须写进计划并等待确认。
 
-> 注意一致性：黑色归一化目前只适用于 VP8/VP9。若用户对 MOV 类格式（ProRes 4444、HAP Alpha）也要求黑底，需另行验证 filter 在该链路的行为，不得直接套用。
+**CRF 是逐编码器的相对刻度，不能跨平台类比。** VP9 的 30 不等于 x264 的 30；黑底 MP4（libx264）固定 CRF 20 / preset slow。同一 libvpx 家族内部也不可类比：VP8 CRF 30 的 PSNR 比 VP9 CRF 30 低约 7 dB。
 
-### 3.1 VP9 WebM（默认）
+### 3.2 计划的机读输出
 
-```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 -row-mt 1 "<OUTPUT>.webm"
-```
-
-要求黑底时，在 `-map 0:v:0 -an` 之后插入 §3.0 的 premultiply `-vf`。
-
-**注意：CRF 是逐编码器的相对刻度，不能跨平台类比。** VP9 的 30 不等于 x264 的 30。黑底 MP4（libx264）使用 CRF 20，不要因为 WebM 默认 30 就把 MP4 也改高。同一 libvpx 家族内部也不可类比：实测 VP8 CRF 30 的 PSNR 比 VP9 CRF 30 低约 7.6 dB。
-
-### 3.2 VP9 lossless WebM
-
-同上（默认无 `-vf`；要求黑底时同样插入 §3.0 的 `-vf`），编码段改为：
-
-```text
--c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -lossless 1 -deadline good -cpu-used 2 -row-mt 1
-```
-
-### 3.3 VP8 WebM
-
-体积可能小于 VP9，但实测同一素材上 VP8 CRF 30 的可见区 PSNR 比 VP9 CRF 30 低约 7.6 dB，且误差随帧序累积（第 2 帧平均差 3.49 → 第 60 帧 9.63，最大差达 223）。用户明确要求 VP8 或追求极小体积时才使用。
-
-```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v libvpx -pix_fmt yuva420p -auto-alt-ref 0 -b:v 0 -crf 30 -deadline good -cpu-used 2 "<OUTPUT>.webm"
-```
-
-要求黑底时，在 `-map 0:v:0 -an` 之后插入 §3.0 的 premultiply `-vf`。
-
-### 3.4 ProRes 4444 MOV
-
-```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v prores_ks -profile:v 4444 -alpha_bits 8 -pix_fmt yuva444p10le "<OUTPUT>.mov"
-```
-
-`-alpha_bits 8` 只降低部分 alpha 数据成本；ProRes 4444 仍是高码率编辑母版。
-
-### 3.5 HAP Alpha MOV
-
-先确认 `hap` encoder，再确认尺寸约束；确认后：
-
-```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -fps_mode passthrough -enc_time_base demux -c:v hap -format hap_alpha -compressor snappy -pix_fmt rgba "<OUTPUT>.mov"
-```
-
-若 FFmpeg 9/BtbN 对目标尺寸或像素格式报错，停止并报告原始错误；不得自动缩放或裁切。
-
-### 3.6 PNG-in-MOV、qtrle、FFV1
-
-```text
-PNG:   -c:v png   -pix_fmt rgba       <OUTPUT>.mov
-qtrle: -c:v qtrle -pix_fmt argb       <OUTPUT>.mov
-FFV1:  -c:v ffv1 -level 3 -coder 1 -context 1 -g 1 -slicecrc 1 -pix_fmt yuva444p <OUTPUT>.mkv
-```
-
-均接公共参数，且不加入固定 `-r`。
-
-### 3.7 明确黑底 H.264 MP4（唯一不透明例外）
-
-只有用户明确选择“黑底 MP4”后才允许此路径。计划必须说明输出将永久失去 alpha。不要先转 WebM：用户最终只要黑底 MP4 时，应直接从 GIF 输出。
-
-**宽高必须均为偶数**，原因是 `yuv420p` 的 2×2 色度抽样，不是 x264 的任意限制：宽或高任一为奇数都会被编码器硬拒，报错原文为 `width not divisible by 2` / `height not divisible by 2`（2026-10-02 在 999×999 / 999×1000 / 1000×999 三种组合上实测确认）。奇数尺寸停止并报告，**不得自动缩放、裁切或补边**。
-
-例外仅作解释用：`yuv444p` 没有色度抽样，999×999 可以编码成功；但 High 4:4:4 profile 在多数播放器与平台上不被支持，**不得把它当作绕过尺码约束的手段**。
-
-```powershell
-ffmpeg -hide_banner -n -ignore_loop 1 -i "<INPUT>" -map 0:v:0 -an -vf "format=rgba,premultiply=inplace=1:planes=0x7,format=yuv420p" -fps_mode passthrough -enc_time_base demux -c:v libx264 -crf 20 -preset slow -movflags +faststart "<OUTPUT>.mp4"
-```
-
-该 premultiply 对二值 alpha 等价于合成到黑色；不得把它推广为任意背景功能。
-
-`-vf` 里的 **`format=yuv420p` 不可省略**。省掉它时 ffmpeg 会自动协商成 `yuv444p`（H.264 High 4:4:4 Predictive）——多数播放器不支持，而且会**绕过上面的偶数校验**：999×999 也能"成功"产出。这条静默降级比报错更难发现，2026-10-02 实测确认。
-
-奇数尺寸只影响 MP4：WebM 侧 999×999 / 1000×999 / 999×1000 均正常产出且尺寸不变（实测通过）。
+`tgtv convert ... --dry-run --json` 输出结构化计划（输入信息、格式、参数、底色策略、覆盖行为），供 agent 转述给用户。
 
 ## 4. 转换后验证
 
 失败时保留错误信息，并把输出视为可能不完整；不报告成功。
 
-### 4.1 所有输出：完整解码
-
-```powershell
-ffmpeg -hide_banner -v error -i "<OUTPUT>" -map 0:v:0 -f null NUL
+```bash
+tgtv verify out.webm --source in.gif              # 默认路径：完整断言
+tgtv verify out.webm --source in.gif --black      # --black 产物：透明区归黑是预期
+tgtv verify out.mp4 --source in.gif --black       # mp4-black：无 alpha 即正确证据
+tgtv verify out.webm                              # 无源模式：仅输出自身断言
+tgtv verify out.webm --json                       # 机读（checks + stats 全量数字）
 ```
 
-### 4.2 Alpha 与真实透明像素
+退出码 0=通过 / 1=失败。验证规则（全部内置于 verify，不需要手写 ffmpeg 管线）：
 
-VP9 必须显式 `-c:v libvpx-vp9`，VP8 必须显式 `-c:v libvpx`；不要按 `*.webm` 猜 decoder。
+1. **完整解码**：全部帧无错解出，帧数 > 0。
+2. **显式 decoder**：WebM 的 VP9/VP8 按容器声明的 codec 显式用 `libvpx-vp9` / `libvpx` 解码（不按扩展名猜——原生解码器会把 `yuva420p` 悄悄读成 `yuv420p` 丢掉 alpha）。
+3. **alpha 存在 ≠ 有透明像素**：全帧扫描 alpha 最小值，断言至少一帧 < 255。首帧不透明的素材只有全帧扫描能发现透明。
+4. **半透明区分轻重**：轻微取整（1–31/224–254）与可见晕环（32–223）分开统计；有损路径卡晕环占比 < 0.5%。
+5. **PTS 逐帧一致 + 总时长一致**（含最后一帧）：未被平均成 CFR。
+6. **底色策略**（提供 `--source` 时）：默认断言透明区 RGB 与源一致——这是**意外预乘检测器**（历史上 out.webm 黑底 bug 正是这一类，透明区被拉黑、默认期望下 verify 报 FAIL 并提示改用 `--black` 期望）；`--black`/mp4-black 路径断言透明区归黑。
+7. **可见区保真**：RGB 平均绝对差与 PSNR；png-mov/qtrle 要求 RGBA 域逐像素一致；ffv1 在其原生 yuva444p 域逐像素一致（RGBA 域差异是色彩空间往返假象）。
+8. **黑底 MP4**：断言解码无 alpha（预期）且透明区呈现黑；「无 alpha 平面」本身就是该路径的正确证据。
 
-两条命令约束，缺一不可：
-
-1. **不能加 `-v error`。** `signalstats` 与 `metadata=print` 输出在 info 级；加 `-v error` 会导致 YMIN/YMAX 采样数为 0，"扫描全部帧"静默退化成"零帧"，断言被跳过却不报错（实测确认）。
-2. **必须加 `format=gray`。** ProRes 4444 读取为 `yuva444p12le` 时 `alphaextract` 输出 gray16，`signalstats` 在 16 位域报值，8 位阈值 `YMIN<255` 会误判 FAIL（实测某次报 `YMIN=256`，而 alpha 实际逐像素正确）。
-
-```powershell
-ffmpeg -hide_banner -c:v libvpx-vp9 -i "<VP9.webm>" -vf alphaextract,format=gray,signalstats,metadata=print -f null NUL
-ffmpeg -hide_banner -c:v libvpx     -i "<VP8.webm>" -vf alphaextract,format=gray,signalstats,metadata=print -f null NUL
-```
-
-其他 alpha 格式使用 `-i` 后接同样的 `-vf`。`alphaextract` 成功只证明存在 alpha 平面，不证明存在透明像素；必须扫描全部帧，读取 signalstats 的 YMIN/YMAX，并断言至少一帧 `YMIN < 255`。
-
-**不要只用第一帧下画质结论。** 首帧是关键帧，天然干净；有损编码的 alpha 污染与 RGB 误差从第 2 帧起才随帧间预测显现并累积。回归测试必须逐帧统计半透明像素数与可见区 RGB 误差（见 `test-reports/2026-10-02-matrix.md` §12/§13 的反例）。
-
-首帧不透明的素材会把这条规则推到极端：实测某夹具**首帧 `YMIN=255`（判定为"无透明像素"），全帧扫描 `YMIN=0`**（见 `tests/run_matrix.py` 分组 4）。
-
-**统计"半透明像素数"时要区分轻重。** CRF 30 也不能保证 alpha 严格二值——存在 `alpha=1~31 / 224~254` 这类量化取整，肉眼不可见。真正会显示为边缘羽化的是中间值，所以断言应卡 `32 <= alpha <= 223` 的占比（实测各夹具均 <0.5%），而不是要求"零半透明"。
-
-黑底 MP4 应完整解码并确认输出为 `yuv420p`/无 alpha；`alphaextract` 对它失败是预期的“不透明”证据，而不是错误。另用 `signalstats` 或抽样帧确认黑色透明区，不把“无 alpha 平面”误称为像素内容验证。
-
-ProRes 必须另外执行 alphaextract，并在目标编辑器实测；HAP 也必须在目标实时播放/剪辑软件实测。
+ProRes 建议另外在目标编辑器实测；播放器兼容性问题（普通播放器白底/黑底）不属于转换缺陷，见 `references/pitfalls.md`。
 
 ## 5. 禁止事项
 
-不确认就编码、静默覆盖、缺 encoder 偷换、背景推断、auto-edge、suggest-background、固定 `-r`、批量转换、图片序列、缩放/裁切，或把“黑色回退”描述成播放器透明兼容性修复。
+不确认就编码、静默覆盖、缺 encoder 偷换格式、背景推断、auto-edge、suggest-background、固定帧率重采样、批量转换、图片序列、缩放/裁切，或把「黑色回退」描述成播放器透明兼容性修复。
 
 ## 6. 参考
 
 - `references/architecture.md`：运行模型与维护边界
 - `references/decision-guide.md`：选择格式与黑底 MP4
-- `references/pitfalls.md`：alpha、WebM decoder、尺寸与故障排查
-- `references/sizing.md`：质量与体积
-- `references/verification.md`：逐帧验证和开发测试限制
+- `references/pitfalls.md`：alpha、解码器陷阱、尺寸与故障排查（含 PyAV 特有条目）
+- `references/sizing.md`：质量与体积（新栈校准数字）
+- `references/verification.md`：验证规则与开发测试
+
+安装与开发：`pip install -e ".[dev]"`；回归见 `tests/README.md` 与 `test-reports/`（新栈矩阵、CLI 等价性对照、sizing 校准）。

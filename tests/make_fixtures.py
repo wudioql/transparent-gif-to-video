@@ -302,17 +302,42 @@ def fx_partial_disposal(out, mode):
 
 def validate_handcrafted(path, w, h, min_opaque=1):
     """自检：手写编码器极易产出看似合法、实际全透明的坏流。
-    任何由 write_gif 生成的夹具都必须先过这一关才能被回归使用。"""
-    import subprocess
+    任何由 write_gif 生成的夹具都必须先过这一关才能被回归使用。
+
+    裁判（Phase 2 起）：优先用 tgtv 读取层（PyAV，与 skill 新栈同解码器，
+    不依赖系统 ffmpeg）；未安装 tgtv 的旧环境回退到系统 ffmpeg subprocess。"""
     import numpy as np
-    p = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-v", "error", "-ignore_loop", "1", "-i", path,
-         "-frames:v", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "-"],
-        capture_output=True)
-    if len(p.stdout) != w * h * 4:
-        raise AssertionError("%s 解码字节数异常：%d（期望 %d）" % (path, len(p.stdout), w * h * 4))
-    a = np.frombuffer(p.stdout, dtype=np.uint8).reshape(h, w, 4)
-    opaque = int((a[:, :, 3] > 0).sum())
+
+    opaque = None
+    try:
+        from tgtv.source import GifSource, GifSourceError
+
+        with_frame = None
+        try:
+            src = GifSource(path)
+            for gf in src.iter_frames():
+                with_frame = gf  # 只查首帧，与旧实现 -frames:v 1 等价
+                break
+        except GifSourceError as e:
+            raise AssertionError("%s 无法解码：%s" % (path, e))
+        if with_frame is None:
+            raise AssertionError("%s 解码出 0 帧" % path)
+        a = with_frame.rgba
+        if a.shape != (h, w, 4):
+            raise AssertionError("%s 解码尺寸异常：%s（期望 (%d, %d, 4)）" % (path, a.shape, h, w))
+        opaque = int((a[:, :, 3] > 0).sum())
+    except ImportError:
+        import subprocess
+
+        p = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-v", "error", "-ignore_loop", "1", "-i", path,
+             "-frames:v", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "-"],
+            capture_output=True)
+        if len(p.stdout) != w * h * 4:
+            raise AssertionError("%s 解码字节数异常：%d（期望 %d）" % (path, len(p.stdout), w * h * 4))
+        a = np.frombuffer(p.stdout, dtype=np.uint8).reshape(h, w, 4)
+        opaque = int((a[:, :, 3] > 0).sum())
+
     if opaque < min_opaque:
         raise AssertionError("%s 首帧不透明像素仅 %d 个 —— 编码器产出坏流，夹具不可信"
                              % (path, opaque))
